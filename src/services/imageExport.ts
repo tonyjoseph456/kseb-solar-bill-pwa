@@ -396,7 +396,7 @@ export async function exportSolarMonthBreakdownAsPng(
     ctx.font = `600 12px ${FONT_STACK}`;
     ctx.textAlign = 'right';
     ctx.fillText(
-      `${stats.recordedDays}/${stats.daysInMonth} days • ${stats.record.sourceFilename}`,
+      `${stats.recordedDays}/${stats.daysInMonth} days`,
       padX + contentW - 14,
       y + bannerH / 2
     );

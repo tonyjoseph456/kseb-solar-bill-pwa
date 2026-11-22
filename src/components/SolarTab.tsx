@@ -565,8 +565,7 @@ export function SolarTab({
                   {selectedStats.monthName} {selectedStats.year}
                 </span>
                 <span style={{ fontSize: '0.78rem', fontWeight: 600, opacity: 0.85 }}>
-                  {selectedStats.recordedDays}/{selectedStats.daysInMonth} days •{' '}
-                  {selectedStats.record.sourceFilename}
+                  {selectedStats.recordedDays}/{selectedStats.daysInMonth} days
                 </span>
               </div>
 
