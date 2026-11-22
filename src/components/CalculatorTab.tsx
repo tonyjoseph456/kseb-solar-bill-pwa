@@ -13,6 +13,7 @@ import type {
   AppSettings,
   BillRecord,
   CurrentReadingsDraft,
+  MeteringMode,
   MeterOwner,
   PhaseType,
   TariffTables,
@@ -79,6 +80,9 @@ export function CalculatorTab({
   const [meterOwner, setMeterOwner] = useState<MeterOwner>(
     baselineRecord?.meterOwner ?? settings.defaultMeterOwner
   );
+  const [meteringMode, setMeteringMode] = useState<MeteringMode>(
+    initialDraft?.meteringMode ?? baselineRecord?.meteringMode ?? 'tod'
+  );
   const [todMode, setTodMode] = useState<TodAdjustmentMode>(settings.todAdjustmentMode);
   const [allowNegativeOC, setAllowNegativeOC] = useState<boolean>(
     Boolean(settings.allowNegativeOwnConsumption)
@@ -118,12 +122,13 @@ export function CalculatorTab({
   const [saveFeedback, setSaveFeedback] = useState('');
   const prevBaselineIdRef = useRef<string | undefined>(baselineRecord?.id);
 
-  // Sync phase, owner, prev overrides & default month when a new PDF baseline is uploaded or switched
+  // Sync phase, owner, prev overrides, meteringMode & default month when a new PDF baseline is uploaded or switched
   useEffect(() => {
     if (baselineRecord && prevBaselineIdRef.current !== baselineRecord.id) {
       prevBaselineIdRef.current = baselineRecord.id;
       setPhaseType(baselineRecord.tariffPhase);
       setMeterOwner(baselineRecord.meterOwner);
+      setMeteringMode(baselineRecord.meteringMode ?? 'tod');
       setBillingMonth(nextMonthAfter(baselineRecord.billingMonth));
       setImportPrevOverride({});
       setExportPrevOverride({});
@@ -144,6 +149,7 @@ export function CalculatorTab({
   useEffect(() => {
     saveReadingsDraft({
       billingMonth,
+      meteringMode,
       importCurr,
       exportCurr,
       genCurr,
@@ -156,6 +162,7 @@ export function CalculatorTab({
     }).catch(() => {});
   }, [
     billingMonth,
+    meteringMode,
     importCurr,
     exportCurr,
     genCurr,
@@ -236,8 +243,10 @@ export function CalculatorTab({
     },
   };
 
+  const isCumulative = meteringMode === 'cumulative';
+  const activeZones = isCumulative ? [ZONES[0]] : ZONES;
   const hasNegativeDiff = (['import', 'export', 'generation'] as const).some((g) =>
-    ZONES.some((z) => channels[g][z.key].invalid)
+    activeZones.some((z) => channels[g][z.key].invalid)
   );
 
   const calc = useMemo(() => {
@@ -247,6 +256,7 @@ export function CalculatorTab({
 
     return calculateProsumerBill(tariffs, {
       billingMonth,
+      meteringMode,
       phaseType,
       meterOwner,
       previousBank: prevBank,
@@ -254,18 +264,18 @@ export function CalculatorTab({
       allowNegativeOwnConsumption: allowNegativeOC,
       importUnits: {
         NL: channels.import.NL.units,
-        OP: channels.import.OP.units,
-        PK: channels.import.PK.units,
+        OP: isCumulative ? 0 : channels.import.OP.units,
+        PK: isCumulative ? 0 : channels.import.PK.units,
       },
       exportUnits: {
         NL: channels.export.NL.units,
-        OP: channels.export.OP.units,
-        PK: channels.export.PK.units,
+        OP: isCumulative ? 0 : channels.export.OP.units,
+        PK: isCumulative ? 0 : channels.export.PK.units,
       },
       solarGenUnits: {
         NL: channels.generation.NL.units,
-        OP: channels.generation.OP.units,
-        PK: channels.generation.PK.units,
+        OP: isCumulative ? 0 : channels.generation.OP.units,
+        PK: isCumulative ? 0 : channels.generation.PK.units,
       },
       dutyOverride: Number.isFinite(parsedDuty) ? parsedDuty : null,
       surchargeOverride: Number.isFinite(parsedSurcharge) ? parsedSurcharge : null,
@@ -273,6 +283,8 @@ export function CalculatorTab({
   }, [
     tariffs,
     billingMonth,
+    meteringMode,
+    isCumulative,
     phaseType,
     meterOwner,
     prevBank,
@@ -307,6 +319,21 @@ export function CalculatorTab({
     await clearReadingsDraft();
   }
 
+  function buildGroupReadings(group: 'import' | 'export' | 'generation') {
+    const empty = { ir: 0, fr: 0, mf: 1, units: 0 };
+    const toZoneReading = (zone: ZoneKey) => ({
+      ir: channels[group][zone].prev,
+      fr: channels[group][zone].curr,
+      mf: channels[group][zone].mf,
+      units: channels[group][zone].units,
+    });
+    return {
+      NL: toZoneReading('NL'),
+      OP: isCumulative ? { ...empty } : toZoneReading('OP'),
+      PK: isCumulative ? { ...empty } : toZoneReading('PK'),
+    };
+  }
+
   async function handleSaveCalculation() {
     setSaving(true);
     setSaveFeedback('');
@@ -327,66 +354,9 @@ export function CalculatorTab({
         bankOpening: prevBank,
         bankClosing: calc.updatedBank,
         readings: {
-          import: {
-            NL: {
-              ir: channels.import.NL.prev,
-              fr: channels.import.NL.curr,
-              mf: channels.import.NL.mf,
-              units: channels.import.NL.units,
-            },
-            OP: {
-              ir: channels.import.OP.prev,
-              fr: channels.import.OP.curr,
-              mf: channels.import.OP.mf,
-              units: channels.import.OP.units,
-            },
-            PK: {
-              ir: channels.import.PK.prev,
-              fr: channels.import.PK.curr,
-              mf: channels.import.PK.mf,
-              units: channels.import.PK.units,
-            },
-          },
-          export: {
-            NL: {
-              ir: channels.export.NL.prev,
-              fr: channels.export.NL.curr,
-              mf: channels.export.NL.mf,
-              units: channels.export.NL.units,
-            },
-            OP: {
-              ir: channels.export.OP.prev,
-              fr: channels.export.OP.curr,
-              mf: channels.export.OP.mf,
-              units: channels.export.OP.units,
-            },
-            PK: {
-              ir: channels.export.PK.prev,
-              fr: channels.export.PK.curr,
-              mf: channels.export.PK.mf,
-              units: channels.export.PK.units,
-            },
-          },
-          generation: {
-            NL: {
-              ir: channels.generation.NL.prev,
-              fr: channels.generation.NL.curr,
-              mf: channels.generation.NL.mf,
-              units: channels.generation.NL.units,
-            },
-            OP: {
-              ir: channels.generation.OP.prev,
-              fr: channels.generation.OP.curr,
-              mf: channels.generation.OP.mf,
-              units: channels.generation.OP.units,
-            },
-            PK: {
-              ir: channels.generation.PK.prev,
-              fr: channels.generation.PK.curr,
-              mf: channels.generation.PK.mf,
-              units: channels.generation.PK.units,
-            },
-          },
+          import: buildGroupReadings('import'),
+          export: buildGroupReadings('export'),
+          generation: buildGroupReadings('generation'),
         },
         summary: {
           totalImport: calc.importUnits,
@@ -408,6 +378,7 @@ export function CalculatorTab({
           consumerEquivalentTotal: calc.consumerComparison.roundedTotal,
           solarSavings: calc.consumerComparison.savings,
         },
+        meteringMode,
         todAdjustmentMode: todMode,
         dutyRateUsed: calc.dutyPercent,
         surchargeRateUsed: calc.surchargeRate,
@@ -422,6 +393,61 @@ export function CalculatorTab({
     } finally {
       setSaving(false);
     }
+  }
+
+  function renderReadingRow(
+    key: string,
+    group: 'import' | 'export' | 'generation',
+    zone: ZoneKey,
+    badgeTitle: string,
+    badgeSub: string,
+    currMap: Record<ZoneKey, string>,
+    setCurrMap: React.Dispatch<React.SetStateAction<Record<ZoneKey, string>>>,
+    setPrevOverride: React.Dispatch<React.SetStateAction<Partial<Record<ZoneKey, string>>>>
+  ) {
+    const ch = channels[group][zone];
+    const prevDisplay = getPrevInputDisplay(group, zone);
+    return (
+      <div className="zone-row" key={key}>
+        <div className="zone-badge">
+          <strong>{badgeTitle}</strong>
+          <span>{badgeSub}</span>
+        </div>
+
+        <div>
+          <label className="field-label">Previous (FR)</label>
+          <input
+            type="number"
+            step="any"
+            inputMode="decimal"
+            className={baselineRecord ? 'prev-autofilled' : ''}
+            value={prevDisplay}
+            onChange={(e) =>
+              setPrevOverride((old) => ({ ...old, [zone]: e.target.value }))
+            }
+          />
+        </div>
+
+        <div>
+          <label className="field-label">Current Reading</label>
+          <input
+            type="number"
+            step="any"
+            inputMode="decimal"
+            className={ch.invalid ? 'input-error' : ''}
+            placeholder={String(ch.prev)}
+            value={currMap[zone]}
+            onChange={(e) =>
+              setCurrMap((old) => ({ ...old, [zone]: e.target.value }))
+            }
+          />
+        </div>
+
+        <div className={`units-chip ${ch.invalid ? 'negative' : ''}`}>
+          {ch.invalid ? 'Curr < Prev' : `${ch.units} u`}
+        </div>
+      </div>
+    );
   }
 
   function renderMeterGroup(
@@ -441,51 +467,80 @@ export function CalculatorTab({
           <span className="badge badge-teal">Total: {groupTotal} kWh</span>
         </div>
         <div className="zone-rows">
-          {ZONES.map((z) => {
-            const ch = channels[group][z.key];
-            const prevDisplay = getPrevInputDisplay(group, z.key);
-            return (
-              <div className="zone-row" key={`${group}_${z.key}`}>
-                <div className="zone-badge">
-                  <strong>{group === 'generation' ? z.solarCode : z.label}</strong>
-                  <span>{group === 'generation' ? z.label : `MF ×${ch.mf}`}</span>
-                </div>
+          {ZONES.map((z) =>
+            renderReadingRow(
+              `${group}_${z.key}`,
+              group,
+              z.key,
+              group === 'generation' ? z.solarCode : z.label,
+              group === 'generation' ? z.label : `MF ×${channels[group][z.key].mf}`,
+              currMap,
+              setCurrMap,
+              setPrevOverride
+            )
+          )}
+        </div>
+      </div>
+    );
+  }
 
-                <div>
-                  <label className="field-label">Previous (FR)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    inputMode="decimal"
-                    className={baselineRecord ? 'prev-autofilled' : ''}
-                    value={prevDisplay}
-                    onChange={(e) =>
-                      setPrevOverride((old) => ({ ...old, [z.key]: e.target.value }))
-                    }
-                  />
-                </div>
+  function renderCumulativeCard() {
+    const cumulativeRows: {
+      group: 'import' | 'export' | 'generation';
+      title: string;
+      subtitle: string;
+      currMap: Record<ZoneKey, string>;
+      setCurrMap: React.Dispatch<React.SetStateAction<Record<ZoneKey, string>>>;
+      setPrevOverride: React.Dispatch<React.SetStateAction<Partial<Record<ZoneKey, string>>>>;
+    }[] = [
+      {
+        group: 'import',
+        title: 'Net Import',
+        subtitle: `Cumulative • MF ×${channels.import.NL.mf}`,
+        currMap: importCurr,
+        setCurrMap: setImportCurr,
+        setPrevOverride: setImportPrevOverride,
+      },
+      {
+        group: 'export',
+        title: 'Net Export',
+        subtitle: `Cumulative • MF ×${channels.export.NL.mf}`,
+        currMap: exportCurr,
+        setCurrMap: setExportCurr,
+        setPrevOverride: setExportPrevOverride,
+      },
+      {
+        group: 'generation',
+        title: 'Solar Gen (WAL)',
+        subtitle: 'Generation Meter',
+        currMap: genCurr,
+        setCurrMap: setGenCurr,
+        setPrevOverride: setGenPrevOverride,
+      },
+    ];
 
-                <div>
-                  <label className="field-label">Current Reading</label>
-                  <input
-                    type="number"
-                    step="any"
-                    inputMode="decimal"
-                    className={ch.invalid ? 'input-error' : ''}
-                    placeholder={String(ch.prev)}
-                    value={currMap[z.key]}
-                    onChange={(e) =>
-                      setCurrMap((old) => ({ ...old, [z.key]: e.target.value }))
-                    }
-                  />
-                </div>
-
-                <div className={`units-chip ${ch.invalid ? 'negative' : ''}`}>
-                  {ch.invalid ? 'Curr < Prev' : `${ch.units} u`}
-                </div>
-              </div>
-            );
-          })}
+    return (
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">Cumulative Meter Readings (Pre-Oct 2025)</h2>
+          <span className="badge badge-teal">
+            Imp {channels.import.NL.units} / Exp {channels.export.NL.units} / Gen{' '}
+            {channels.generation.NL.units} kWh
+          </span>
+        </div>
+        <div className="zone-rows">
+          {cumulativeRows.map((row) =>
+            renderReadingRow(
+              `cum_${row.group}`,
+              row.group,
+              'NL',
+              row.title,
+              row.subtitle,
+              row.currMap,
+              row.setCurrMap,
+              row.setPrevOverride
+            )
+          )}
         </div>
       </div>
     );
@@ -606,31 +661,53 @@ export function CalculatorTab({
             borderTop: '1px solid var(--border)',
           }}
         >
-          <div style={{ flex: '1 1 300px' }}>
-            <label className="field-label">ToD Zone Adjustment Priority (&gt;250 net units)</label>
+          <div style={{ flex: '1 1 250px' }}>
+            <label className="field-label">Metering Mode</label>
             <div className="segmented">
               <button
                 type="button"
-                className={todMode === 'anwarbio' ? 'active' : ''}
-                onClick={() => {
-                  setTodMode('anwarbio');
-                  onChangeTodMode('anwarbio');
-                }}
+                className={meteringMode === 'tod' ? 'active' : ''}
+                onClick={() => setMeteringMode('tod')}
               >
-                anwarbio Default (NL → OP → PK)
+                ToD (NL / OP / PK)
               </button>
               <button
                 type="button"
-                className={todMode === 'kseb' ? 'active' : ''}
-                onClick={() => {
-                  setTodMode('kseb');
-                  onChangeTodMode('kseb');
-                }}
+                className={meteringMode === 'cumulative' ? 'active' : ''}
+                onClick={() => setMeteringMode('cumulative')}
               >
-                KSEB OrumaNET (PK → NL → OP)
+                Cumulative (Pre-Oct 2025)
               </button>
             </div>
           </div>
+
+          {!isCumulative && (
+            <div style={{ flex: '1 1 300px' }}>
+              <label className="field-label">ToD Zone Adjustment Priority (&gt;250 net units)</label>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={todMode === 'anwarbio' ? 'active' : ''}
+                  onClick={() => {
+                    setTodMode('anwarbio');
+                    onChangeTodMode('anwarbio');
+                  }}
+                >
+                  anwarbio Default (NL → OP → PK)
+                </button>
+                <button
+                  type="button"
+                  className={todMode === 'kseb' ? 'active' : ''}
+                  onClick={() => {
+                    setTodMode('kseb');
+                    onChangeTodMode('kseb');
+                  }}
+                >
+                  KSEB OrumaNET (PK → NL → OP)
+                </button>
+              </div>
+            </div>
+          )}
 
           <div style={{ flex: '1 1 280px' }}>
             <label className="field-label">Own Consumption (Solar Gen − Export)</label>
@@ -742,26 +819,32 @@ export function CalculatorTab({
       )}
 
       {/* Meter Inputs */}
-      {renderMeterGroup(
-        '1. Net Meter — Import Readings',
-        'import',
-        importCurr,
-        setImportCurr,
-        setImportPrevOverride
-      )}
-      {renderMeterGroup(
-        '2. Net Meter — Export Readings',
-        'export',
-        exportCurr,
-        setExportCurr,
-        setExportPrevOverride
-      )}
-      {renderMeterGroup(
-        '3. Solar Generation Meter Readings',
-        'generation',
-        genCurr,
-        setGenCurr,
-        setGenPrevOverride
+      {isCumulative ? (
+        renderCumulativeCard()
+      ) : (
+        <>
+          {renderMeterGroup(
+            '1. Net Meter — Import Readings',
+            'import',
+            importCurr,
+            setImportCurr,
+            setImportPrevOverride
+          )}
+          {renderMeterGroup(
+            '2. Net Meter — Export Readings',
+            'export',
+            exportCurr,
+            setExportCurr,
+            setExportPrevOverride
+          )}
+          {renderMeterGroup(
+            '3. Solar Generation Meter Readings',
+            'generation',
+            genCurr,
+            setGenCurr,
+            setGenPrevOverride
+          )}
+        </>
       )}
 
       {/* Live Result Card */}
@@ -780,7 +863,11 @@ export function CalculatorTab({
               </strong>{' '}
               • Method:{' '}
               <strong>
-                {calc.billingMethod === 'telescopic' ? 'Telescopic (≤250 u)' : 'ToD Non-Telescopic'}
+                {calc.billingMethod === 'telescopic'
+                  ? 'Telescopic (≤250 u)'
+                  : calc.billingMethod === 'non-telescopic'
+                    ? 'Non-Telescopic (Cumulative)'
+                    : 'ToD Non-Telescopic'}
               </strong>
             </div>
           </div>
@@ -833,7 +920,11 @@ export function CalculatorTab({
           <div className="card-header">
             <h3 className="card-title">Bill Breakdown</h3>
             <span className="badge badge-sky">
-              {calc.mode === 'anwarbio' ? 'anwarbio NL→OP→PK' : 'OrumaNET PK→NL→OP'}
+              {calc.meteringMode === 'cumulative'
+                ? 'Cumulative Meter'
+                : calc.mode === 'anwarbio'
+                  ? 'anwarbio NL→OP→PK'
+                  : 'OrumaNET PK→NL→OP'}
             </span>
           </div>
           <table className="data-table">
@@ -911,7 +1002,9 @@ export function CalculatorTab({
           <div className="card-header">
             <h3 className="card-title">
               <Sparkles size={16} color="#0f766e" />
-              ToD Adjustment & Solar Savings
+              {calc.meteringMode === 'cumulative'
+                ? 'Cumulative Adjustment & Solar Savings'
+                : 'ToD Adjustment & Solar Savings'}
             </h3>
           </div>
           <table className="data-table" style={{ marginBottom: 14 }}>
@@ -924,9 +1017,12 @@ export function CalculatorTab({
               </tr>
             </thead>
             <tbody>
-              {ZONES.map((z) => (
+              {(calc.meteringMode === 'cumulative'
+                ? [{ key: 'NL' as ZoneKey, label: 'Cumulative' }]
+                : ZONES.map((z) => ({ key: z.key, label: z.key }))
+              ).map((z) => (
                 <tr key={z.key}>
-                  <td>{z.key}</td>
+                  <td>{z.label}</td>
                   <td className="num">{channels.import[z.key].units}</td>
                   <td className="num">{channels.export[z.key].units}</td>
                   <td className="num">

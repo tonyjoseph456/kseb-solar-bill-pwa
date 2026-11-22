@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileUp, X } from 'lucide-react';
-import type { BillRecord, ZoneKey } from '../types';
+import type { BillRecord, MeteringMode, ZoneKey } from '../types';
 import { parseKsebPdfFile } from '../services/pdfParser';
 
 interface PdfUploadModalProps {
@@ -46,6 +46,35 @@ export function PdfUploadModal({ onClose, onSaveBill }: PdfUploadModalProps) {
   function updateField<K extends keyof BillRecord>(key: K, val: BillRecord[K]) {
     if (!parsedRecord) return;
     setParsedRecord({ ...parsedRecord, [key]: val });
+  }
+
+  function handleMeteringModeChange(nextMode: MeteringMode) {
+    if (!parsedRecord) return;
+    if (nextMode === 'cumulative') {
+      const zeroZone = { ir: 0, fr: 0, mf: 1, units: 0 };
+      const nextReadings = {
+        import: { ...parsedRecord.readings.import, OP: { ...zeroZone }, PK: { ...zeroZone } },
+        export: { ...parsedRecord.readings.export, OP: { ...zeroZone }, PK: { ...zeroZone } },
+        generation: { ...parsedRecord.readings.generation, OP: { ...zeroZone }, PK: { ...zeroZone } },
+      };
+      const totalImport = nextReadings.import.NL.units;
+      const totalExport = nextReadings.export.NL.units;
+      const solarGenerated = nextReadings.generation.NL.units;
+      setParsedRecord({
+        ...parsedRecord,
+        meteringMode: 'cumulative',
+        readings: nextReadings,
+        summary: {
+          ...parsedRecord.summary,
+          totalImport,
+          totalExport,
+          solarGenerated,
+          ownConsumption: Math.max(0, solarGenerated - totalExport),
+        },
+      });
+    } else {
+      setParsedRecord({ ...parsedRecord, meteringMode: 'tod' });
+    }
   }
 
   function updateReading(
@@ -271,6 +300,16 @@ export function PdfUploadModal({ onClose, onSaveBill }: PdfUploadModalProps) {
                   <option value="kseb">KSEB Owned</option>
                 </select>
               </div>
+              <div>
+                <label className="field-label">Metering Mode</label>
+                <select
+                  value={parsedRecord.meteringMode ?? 'tod'}
+                  onChange={(e) => handleMeteringModeChange(e.target.value as MeteringMode)}
+                >
+                  <option value="tod">ToD Zones (NL / OP / PK)</option>
+                  <option value="cumulative">Cumulative (Pre-Oct 2025)</option>
+                </select>
+              </div>
             </div>
 
             <h3 style={{ fontSize: '0.92rem', margin: '12px 0 6px' }}>
@@ -288,8 +327,17 @@ export function PdfUploadModal({ onClose, onSaveBill }: PdfUploadModalProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(['import', 'export', 'generation'] as const).map((group) =>
-                    ZONE_LABELS.map((z) => {
+                  {(['import', 'export', 'generation'] as const).map((group) => {
+                    const isCumulative = (parsedRecord.meteringMode ?? 'tod') === 'cumulative';
+                    const zonesToRender = isCumulative
+                      ? [
+                          {
+                            key: 'NL' as ZoneKey,
+                            label: group === 'generation' ? 'Cumulative (WAL)' : 'Cumulative',
+                          },
+                        ]
+                      : ZONE_LABELS;
+                    return zonesToRender.map((z) => {
                       const row = parsedRecord.readings[group][z.key];
                       return (
                         <tr key={`${group}_${z.key}`}>
@@ -338,8 +386,8 @@ export function PdfUploadModal({ onClose, onSaveBill }: PdfUploadModalProps) {
                           </td>
                         </tr>
                       );
-                    })
-                  )}
+                    });
+                  })}
                 </tbody>
               </table>
             </div>

@@ -2,6 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type {
   BillRecord,
+  MeteringMode,
   MeterOwner,
   MeterSnapshotReadings,
   PhaseType,
@@ -120,8 +121,12 @@ export function parseKsebBillPages(
   if (page3Name) {
     consumerName = page3Name[1].trim();
   } else {
-    const page1Name = fullText.match(/Name\s*&\s*Mailing\s*Address\s*\n\s*([^\n]+)/i);
-    if (page1Name) consumerName = page1Name[1].trim();
+    const page1Name = fullText.match(/Name\s*&\s*Mailing\s*Address[^\n]*\n\s*([^\n]+)/i);
+    if (page1Name) {
+      consumerName = page1Name[1]
+        .replace(/\s+(?:South|Central|North|State\s+Electricity\s+Ombudsman)\s*:.*$/i, '')
+        .trim();
+    }
   }
 
   const sectionMatch = fullText.match(/Section\s+([^\n]+?)(?:\s+Phone#|\n|$)/i);
@@ -137,7 +142,9 @@ export function parseKsebBillPages(
   const tariffPhase: PhaseType =
     phaseMatch && /single/i.test(phaseMatch[1]) ? 'single' : 'three';
 
-  const ownerMatch = fullText.match(/Meter\s*Owner\s*(Customer|Prosumer|KSEB|Board)/i);
+  const ownerMatch = fullText.match(
+    /Meter\s*(?:Owner|Type\s*\/\s*Owner)\s*(?:[^/\n]+\/\s*)?(Customer|Prosumer|KSEB|Board)/i
+  );
   const meterOwner: MeterOwner =
     ownerMatch && /kseb|board/i.test(ownerMatch[1]) ? 'kseb' : 'prosumer';
 
@@ -188,13 +195,47 @@ export function parseKsebBillPages(
       netRowsMatched++;
     }
   }
-  if (netRowsMatched < 6) {
+  let meteringMode: MeteringMode = 'tod';
+  let cumRowsMatched = 0;
+  if (netRowsMatched === 0) {
+    const cumConfigs: { trading: 'import' | 'export'; tradingLabel: string }[] = [
+      { trading: 'import', tradingLabel: 'Import' },
+      { trading: 'export', tradingLabel: 'Export' },
+    ];
+    for (const cfg of cumConfigs) {
+      const re = new RegExp(
+        `^\\s*(?:KWH\\s+)?Cumulative\\s+${cfg.tradingLabel}\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d,]+(?:\\.\\d+)?)\\s+([\\d.]+)\\s+([\\d,]+(?:\\.\\d+)?)`,
+        'im'
+      );
+      const m = fullText.match(re);
+      if (m) {
+        readings[cfg.trading].NL = {
+          ir: cleanNum(m[1]),
+          fr: cleanNum(m[2]),
+          mf: cleanNum(m[3]) || 1,
+          units: cleanNum(m[4]),
+        };
+        cumRowsMatched++;
+      }
+    }
+    if (cumRowsMatched > 0 || /Power\s*Unit\/Zone\s*CUMULATIVE/i.test(fullText)) {
+      meteringMode = 'cumulative';
+    }
+  }
+
+  if (meteringMode === 'cumulative') {
+    if (cumRowsMatched < 2) {
+      warnings.push(
+        `Only ${cumRowsMatched}/2 Cumulative Net Meter rows matched automatically. Please verify values below.`
+      );
+    }
+  } else if (netRowsMatched < 6) {
     warnings.push(
       `Only ${netRowsMatched}/6 Net Meter rows matched automatically. Please verify values below.`
     );
   }
 
-  // 3. Solar Generation Readings (Page 2: WNL, WOP, WPK)
+  // 3. Solar Generation Readings (Page 2: WNL, WOP, WPK or pre-Oct-2025 WAL)
   const solarConfigs: { zone: 'NL' | 'OP' | 'PK'; code: string }[] = [
     { zone: 'NL', code: 'WNL' },
     { zone: 'OP', code: 'WOP' },
@@ -218,7 +259,21 @@ export function parseKsebBillPages(
       solarRowsMatched++;
     }
   }
-  if (solarRowsMatched < 3) {
+  if (solarRowsMatched === 0 && meteringMode === 'cumulative') {
+    const walMatch = fullText.match(
+      /\bWAL\s+(?:[IE]\s+)?([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)\s+([\d.]+)\s+([\d,]+(?:\.\d+)?)/i
+    );
+    if (walMatch) {
+      readings.generation.NL = {
+        ir: cleanNum(walMatch[1]),
+        fr: cleanNum(walMatch[2]),
+        mf: cleanNum(walMatch[3]) || 1,
+        units: cleanNum(walMatch[4]),
+      };
+    } else {
+      warnings.push('Cumulative Solar Generation row (WAL) did not match automatically.');
+    }
+  } else if (solarRowsMatched < 3) {
     warnings.push(
       `Only ${solarRowsMatched}/3 Solar Generation rows (WNL/WOP/WPK) matched automatically.`
     );
@@ -311,6 +366,7 @@ export function parseKsebBillPages(
       totalAmount,
       netPayable,
     },
+    meteringMode,
     tariffSource: 'Official KSEB OrumaNET PDF',
     pdfFilename: filename,
     hasLocalPdf: true,

@@ -37,6 +37,27 @@ function formatMB(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+function renderTypeBadges(rec: BillRecord) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+      {rec.recordType === 'official_bill' ? (
+        <span className="badge badge-teal">Official PDF</span>
+      ) : (
+        <span className="badge badge-sky">Meter Estimate</span>
+      )}
+      {rec.meteringMode === 'cumulative' && (
+        <span
+          className="badge"
+          style={{ background: '#f1f5f9', color: '#475569' }}
+          title="Pre-Oct 2025 Cumulative Billing"
+        >
+          Cumulative
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function HistoryTab({
   records,
   settings,
@@ -316,13 +337,7 @@ export function HistoryTab({
                           {rec.consumerNo || rec.consumerName}
                         </div>
                       </td>
-                      <td>
-                        {rec.recordType === 'official_bill' ? (
-                          <span className="badge badge-teal">Official PDF</span>
-                        ) : (
-                          <span className="badge badge-sky">Meter Estimate</span>
-                        )}
-                      </td>
+                      <td>{renderTypeBadges(rec)}</td>
                       <td className="num">{rec.summary.totalImport}</td>
                       <td className="num">{rec.summary.totalExport}</td>
                       <td className="num">{rec.summary.solarGenerated}</td>
@@ -396,11 +411,7 @@ export function HistoryTab({
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <strong style={{ fontSize: '1rem' }}>{rec.billingLabel}</strong>
-                        {rec.recordType === 'official_bill' ? (
-                          <span className="badge badge-teal">Official PDF</span>
-                        ) : (
-                          <span className="badge badge-sky">Meter Estimate</span>
-                        )}
+                        {renderTypeBadges(rec)}
                         {rec.syncStatus === 'synced' ? (
                           <span className="badge badge-green">Synced</span>
                         ) : (
@@ -497,11 +508,20 @@ export function HistoryTab({
                   {selected.recordType === 'official_bill'
                     ? 'Official KSEB PDF Bill'
                     : 'Saved Meter Calculation'}
+                  {selected.meteringMode === 'cumulative' && (
+                    <span
+                      className="badge"
+                      style={{ background: '#f1f5f9', color: '#475569', marginLeft: 8 }}
+                    >
+                      Cumulative
+                    </span>
+                  )}
                 </h2>
                 <div className="text-muted">
                   Consumer: {selected.consumerName || '—'} ({selected.consumerNo || '—'}) •
-                  Phase: {selected.tariffPhase} • Bank Opening: {selected.bankOpening} → Closing:{' '}
-                  {selected.bankClosing}
+                  Phase: {selected.tariffPhase} • Mode:{' '}
+                  {selected.meteringMode === 'cumulative' ? 'Cumulative (Pre-Oct 2025)' : 'ToD'} •
+                  Bank Opening: {selected.bankOpening} → Closing: {selected.bankClosing}
                 </div>
               </div>
               <button
@@ -514,7 +534,9 @@ export function HistoryTab({
             </div>
 
             <h3 style={{ fontSize: '0.92rem', margin: '10px 0 6px' }}>
-              Zone-Wise Meter Readings & Consumption
+              {selected.meteringMode === 'cumulative'
+                ? 'Cumulative Meter Readings & Consumption'
+                : 'Zone-Wise Meter Readings & Consumption'}
             </h3>
             <div style={{ overflowX: 'auto', marginBottom: 14 }}>
               <table className="data-table">
@@ -528,8 +550,18 @@ export function HistoryTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {(['import', 'export', 'generation'] as const).map((group) =>
-                    ZONE_NAMES.map((z) => {
+                  {(['import', 'export', 'generation'] as const).map((group) => {
+                    const zonesToShow =
+                      selected.meteringMode === 'cumulative'
+                        ? [
+                            {
+                              key: ZONE_NAMES[0].key,
+                              name:
+                                group === 'generation' ? 'Cumulative (WAL)' : 'Cumulative',
+                            },
+                          ]
+                        : ZONE_NAMES;
+                    return zonesToShow.map((z) => {
                       const item = selected.readings[group][z.key];
                       return (
                         <tr key={`${group}_${z.key}`}>
@@ -548,8 +580,8 @@ export function HistoryTab({
                           </td>
                         </tr>
                       );
-                    })
-                  )}
+                    });
+                  })}
                 </tbody>
               </table>
             </div>

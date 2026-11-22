@@ -1,4 +1,5 @@
 import type {
+  MeteringMode,
   MeterOwner,
   PhaseType,
   ProsumerCalculationResult,
@@ -11,6 +12,7 @@ import { SHORT_MONTHS } from './tariffFetcher';
 
 export interface CalculationInputs {
   billingMonth: string; // 'YYYY-MM'
+  meteringMode?: MeteringMode;
   phaseType: PhaseType;
   meterOwner: MeterOwner;
   previousBank: number;
@@ -137,6 +139,31 @@ export function getTodBaseRate(tables: TariffTables, totalUnits: number): number
   return last ? last.base : 9.2;
 }
 
+export function getDomesticNonTelescopicRate(tables: TariffTables, totalUnits: number): number {
+  for (const row of tables.domesticNonTelescopic) {
+    if (totalUnits <= row.upper) {
+      return row.rate;
+    }
+  }
+  const last = tables.domesticNonTelescopic[tables.domesticNonTelescopic.length - 1];
+  return last ? last.rate : 9.2;
+}
+
+function calculateDomesticNonTelescopicCharge(
+  tables: TariffTables,
+  units: number
+): { charge: number; rate: number; breakdownLines: string[] } {
+  const rate = getDomesticNonTelescopicRate(tables, units);
+  const charge = round2(units * rate);
+  return {
+    charge,
+    rate,
+    breakdownLines: [
+      `Non-Telescopic (Cumulative): ${units.toFixed(0)} units × ₹${rate.toFixed(2)} = ₹${charge.toFixed(2)}`,
+    ],
+  };
+}
+
 /**
  * Zone-wise export & bank adjustment:
  * - 'anwarbio': Same-zone first, then surplus export & bank offset in NL -> OP -> PK order
@@ -244,6 +271,7 @@ export function calculateProsumerBill(
   tables: TariffTables,
   inputs: CalculationInputs
 ): ProsumerCalculationResult {
+  const meteringMode: MeteringMode = inputs.meteringMode ?? 'tod';
   const importUnits = inputs.importUnits.NL + inputs.importUnits.OP + inputs.importUnits.PK;
   const exportUnits = inputs.exportUnits.NL + inputs.exportUnits.OP + inputs.exportUnits.PK;
   const solarGenerated =
@@ -254,12 +282,25 @@ export function calculateProsumerBill(
     : Math.max(0, rawOwnConsumption);
   const totalUnitsForFixed = Math.max(0, importUnits + ownConsumption);
 
-  const zoneBreakdown = adjustTodZones(
-    inputs.importUnits,
-    inputs.exportUnits,
-    inputs.previousBank,
-    inputs.todAdjustmentMode
-  );
+  const prevBank = Math.max(0, inputs.previousBank);
+  const zoneBreakdown: ZoneAdjustmentBreakdown =
+    meteringMode === 'cumulative'
+      ? {
+          actualImport: { NL: Math.max(0, importUnits - exportUnits), OP: 0, PK: 0 },
+          netImportAfterExport: { NL: Math.max(0, importUnits - exportUnits), OP: 0, PK: 0 },
+          adjustedImportAfterBank: {
+            NL: Math.max(0, importUnits - exportUnits - prevBank),
+            OP: 0,
+            PK: 0,
+          },
+          updatedBank: Math.max(0, prevBank + exportUnits - importUnits),
+        }
+      : adjustTodZones(
+          inputs.importUnits,
+          inputs.exportUnits,
+          inputs.previousBank,
+          inputs.todAdjustmentMode
+        );
 
   const netImportBeforeBank =
     zoneBreakdown.netImportAfterExport.NL +
@@ -291,6 +332,11 @@ export function calculateProsumerBill(
 
   const nonTelStart = tables.constants.nonTelStartUnit;
   const isTelescopic = billedUnits <= nonTelStart;
+  const prosumerBillingMethod: ProsumerCalculationResult['billingMethod'] = isTelescopic
+    ? 'telescopic'
+    : meteringMode === 'cumulative'
+      ? 'non-telescopic'
+      : 'non-telescopic-tod';
 
   let energyCharge = 0;
   let energyBreakdownLines: string[] = [];
@@ -301,6 +347,10 @@ export function calculateProsumerBill(
     const tel = calculateDomesticTelescopicCharge(tables, billedUnits);
     energyCharge = tel.charge;
     energyBreakdownLines = tel.breakdownLines;
+  } else if (meteringMode === 'cumulative') {
+    const nonTel = calculateDomesticNonTelescopicCharge(tables, billedUnits);
+    energyCharge = nonTel.charge;
+    energyBreakdownLines = nonTel.breakdownLines;
   } else {
     const tod = calculateTodEnergy(
       tables,
@@ -329,11 +379,18 @@ export function calculateProsumerBill(
   // Consumer Equivalent Comparison (mirrors anwarbio consumer section)
   const consumerUnits = totalUnitsForFixed;
   const consumerTelescopic = consumerUnits <= nonTelStart;
+  const consumerBillingMethod: ProsumerCalculationResult['billingMethod'] = consumerTelescopic
+    ? 'telescopic'
+    : meteringMode === 'cumulative'
+      ? 'non-telescopic'
+      : 'non-telescopic-tod';
   const consumerFixed = fixedInfo.value;
   const consumerMeter = getMeterRent(tables, inputs.phaseType, 'Consumer', 'kseb');
   let consumerEnergy = 0;
   if (consumerTelescopic) {
     consumerEnergy = calculateDomesticTelescopicCharge(tables, consumerUnits).charge;
+  } else if (meteringMode === 'cumulative') {
+    consumerEnergy = calculateDomesticNonTelescopicCharge(tables, consumerUnits).charge;
   } else {
     consumerEnergy = calculateTodEnergy(
       tables,
@@ -355,8 +412,9 @@ export function calculateProsumerBill(
   const savings = round2(consumerUnrounded - unroundedTotal);
 
   return {
+    meteringMode,
     mode: inputs.todAdjustmentMode,
-    billingMethod: isTelescopic ? 'telescopic' : 'non-telescopic-tod',
+    billingMethod: prosumerBillingMethod,
     importUnits,
     exportUnits,
     solarGenerated,
@@ -385,7 +443,7 @@ export function calculateProsumerBill(
     roundedTotal,
     consumerComparison: {
       consumerUnits,
-      billingMethod: consumerTelescopic ? 'telescopic' : 'non-telescopic-tod',
+      billingMethod: consumerBillingMethod,
       fixedCharge: consumerFixed,
       meterCharge: consumerMeter,
       energyCharge: round2(consumerEnergy),

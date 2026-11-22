@@ -1,5 +1,6 @@
 export type ZoneKey = 'NL' | 'OP' | 'PK';
 export type TodAdjustmentMode = 'anwarbio' | 'kseb';
+export type MeteringMode = 'tod' | 'cumulative';
 export type PhaseType = 'single' | 'three';
 export type MeterOwner = 'prosumer' | 'kseb';
 export type RecordType = 'official_bill' | 'meter_estimate';
@@ -125,6 +126,7 @@ export interface BillRecord {
   bankClosing: number;
   readings: MeterSnapshotReadings;
   summary: BillSummary;
+  meteringMode?: MeteringMode;
   todAdjustmentMode?: TodAdjustmentMode;
   dutyRateUsed?: number;
   surchargeRateUsed?: number;
@@ -147,8 +149,9 @@ export interface ZoneAdjustmentBreakdown {
 }
 
 export interface ProsumerCalculationResult {
+  meteringMode: MeteringMode;
   mode: TodAdjustmentMode;
-  billingMethod: 'telescopic' | 'non-telescopic-tod';
+  billingMethod: 'telescopic' | 'non-telescopic-tod' | 'non-telescopic';
   importUnits: number;
   exportUnits: number;
   solarGenerated: number;
@@ -177,7 +180,7 @@ export interface ProsumerCalculationResult {
   roundedTotal: number;
   consumerComparison: {
     consumerUnits: number;
-    billingMethod: 'telescopic' | 'non-telescopic-tod';
+    billingMethod: 'telescopic' | 'non-telescopic-tod' | 'non-telescopic';
     fixedCharge: number;
     meterCharge: number;
     energyCharge: number;
@@ -206,6 +209,7 @@ export interface AppSettings {
 
 export interface CurrentReadingsDraft {
   billingMonth: string; // YYYY-MM
+  meteringMode?: MeteringMode;
   importCurr: { NL: string; OP: string; PK: string };
   exportCurr: { NL: string; OP: string; PK: string };
   genCurr: { NL: string; OP: string; PK: string };
