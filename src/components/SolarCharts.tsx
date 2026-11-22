@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Maximize2, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Download, Maximize2, X } from 'lucide-react';
 import type { SolarWeekSummary, SolarYearTableRow } from '../services/solarCalculator';
 
 interface ChartPoint {
@@ -32,6 +32,90 @@ interface ChartFrameProps {
   renderSvg: (enlarged: boolean) => ReactNode;
 }
 
+function sanitizeChartFilename(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${slug || 'solar-chart'}.png`;
+}
+
+async function exportChartSvgAsPng(svgEl: SVGSVGElement, title: string): Promise<void> {
+  const vb = svgEl.viewBox.baseVal;
+  const svgW = vb && vb.width > 0 ? vb.width : svgEl.clientWidth || 780;
+  const svgH = vb && vb.height > 0 ? vb.height : svgEl.clientHeight || 340;
+
+  const clone = svgEl.cloneNode(true) as SVGSVGElement;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(svgW));
+  clone.setAttribute('height', String(svgH));
+  clone.style.fontFamily =
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif';
+
+  const serialized = new XMLSerializer().serializeToString(clone);
+  const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+  const svgUrl = URL.createObjectURL(svgBlob);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('Could not render chart SVG to image.'));
+      image.src = svgUrl;
+    });
+
+    const scale = 2;
+    const padX = 24;
+    const titleAreaH = 44;
+    const padBottom = 16;
+    const totalW = svgW + padX * 2;
+    const totalH = titleAreaH + svgH + padBottom;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(totalW * scale);
+    canvas.height = Math.round(totalH * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, totalW, totalH);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = '700 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, padX, 24, totalW - padX * 2);
+
+    ctx.drawImage(img, padX, titleAreaH, svgW, svgH);
+
+    const pngBlob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/png')
+    );
+
+    const filename = sanitizeChartFilename(title);
+    if (pngBlob) {
+      const dlUrl = URL.createObjectURL(pngBlob);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(dlUrl), 1000);
+    } else {
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
+}
+
 function ChartFrame({
   title,
   tooltipContent,
@@ -41,15 +125,33 @@ function ChartFrame({
   renderSvg,
 }: ChartFrameProps) {
   const [enlarged, setEnlarged] = useState(false);
+  const [savingImage, setSavingImage] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const enlargedBodyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!enlarged) return;
+    setSaveError('');
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') setEnlarged(false);
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [enlarged]);
+
+  async function handleSaveImage() {
+    const svgEl = enlargedBodyRef.current?.querySelector('svg');
+    if (!svgEl) return;
+    setSavingImage(true);
+    setSaveError('');
+    try {
+      await exportChartSvgAsPng(svgEl, title);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Unable to save chart image.');
+    } finally {
+      setSavingImage(false);
+    }
+  }
 
   return (
     <>
@@ -99,18 +201,32 @@ function ChartFrame({
           >
             <div className="card-header" style={{ marginBottom: 6 }}>
               <h2 className="card-title">{title}</h2>
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => setEnlarged(false)}
-                aria-label="Close enlarged chart"
-              >
-                <X size={16} />
-                Close
-              </button>
+              <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={savingImage}
+                  onClick={handleSaveImage}
+                  title="Download high-resolution PNG image"
+                >
+                  <Download size={15} />
+                  {savingImage ? 'Saving...' : 'Save Image'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setEnlarged(false)}
+                  aria-label="Close enlarged chart"
+                >
+                  <X size={16} />
+                  Close
+                </button>
+              </div>
             </div>
             <div className="solar-chart-tooltip-bar" style={{ marginBottom: 8 }}>
-              {tooltipContent ? (
+              {saveError ? (
+                <span className="badge badge-amber">{saveError}</span>
+              ) : tooltipContent ? (
                 <span className={`badge ${tooltipTone === 'teal' ? 'badge-teal' : 'badge-sky'}`}>
                   {tooltipContent}
                 </span>
@@ -120,7 +236,7 @@ function ChartFrame({
                 </span>
               )}
             </div>
-            {renderSvg(true)}
+            <div ref={enlargedBodyRef}>{renderSvg(true)}</div>
           </div>
         </div>
       )}
