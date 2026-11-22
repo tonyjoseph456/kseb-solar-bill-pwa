@@ -404,6 +404,29 @@ export function SolarTab({
           </div>
         </div>
 
+        {/* Selected Year Totals Strip */}
+        <div className="grid-3" style={{ marginTop: 10 }}>
+          <div className="metric-box">
+            <div className="label">Total Units Produced ({selectedYear})</div>
+            <div className="val">{formatMetric(yearSummary.totalUnits)} kWh</div>
+          </div>
+          <div className="metric-box">
+            <div className="label">Average Production ({selectedYear})</div>
+            <div className="val">{yearSummary.dailyAverageInYear.toFixed(2)} u/day</div>
+            <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
+              {formatMetric(yearSummary.monthlyAverageInYear, 1)} kWh / month
+            </div>
+          </div>
+          <div className="metric-box">
+            <div className="label">Daily Production Per kW ({selectedYear})</div>
+            <div className="val">{yearSummary.productionPerKwInYear.toFixed(2)} u/kW</div>
+            <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
+              {yearSummary.monthsWithData} month{yearSummary.monthsWithData === 1 ? '' : 's'} (
+              {yearSummary.totalRecordedDays} days)
+            </div>
+          </div>
+        </div>
+
         {uploadStatus && (
           <div className="banner banner-success" style={{ marginTop: 12, marginBottom: 0 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
