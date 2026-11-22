@@ -23,7 +23,10 @@ import {
   computeSolarYearSummary,
   parseSolarInverterCsv,
 } from '../services/solarCalculator';
-import { exportSolarMonthBreakdownAsPng } from '../services/imageExport';
+import {
+  exportSolarMonthBreakdownAsPng,
+  exportSolarYearSummaryAsPng,
+} from '../services/imageExport';
 import {
   SolarDailyAvgLineChart,
   SolarWeeklyLineChart,
@@ -97,6 +100,7 @@ export function SolarTab({
   const [uploadError, setUploadError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [savingBreakdownImage, setSavingBreakdownImage] = useState(false);
+  const [savingYearImage, setSavingYearImage] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
 
   const [editingMeterLink, setEditingMeterLink] = useState(false);
@@ -307,6 +311,18 @@ export function SolarTab({
       );
     } finally {
       setSavingBreakdownImage(false);
+    }
+  }
+
+  async function handleSaveYearImage() {
+    setSavingYearImage(true);
+    setUploadError('');
+    try {
+      await exportSolarYearSummaryAsPng(yearSummary, plantKw);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Unable to save Yearly Summary image.');
+    } finally {
+      setSavingYearImage(false);
     }
   }
 
@@ -738,9 +754,21 @@ export function SolarTab({
                   Tap any populated month row to view or edit that month&apos;s detailed breakdown
                 </span>
               </div>
-              <span className="badge badge-teal">
-                {yearSummary.monthsWithData} month{yearSummary.monthsWithData === 1 ? '' : 's'}
-              </span>
+              <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span className="badge badge-teal">
+                  {yearSummary.monthsWithData} month{yearSummary.monthsWithData === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={savingYearImage}
+                  onClick={handleSaveYearImage}
+                  title="Save full Yearly Solar Summary table as PNG image"
+                >
+                  <Download size={14} />
+                  {savingYearImage ? 'Saving...' : 'Save Image'}
+                </button>
+              </div>
             </div>
 
             <div className="solar-year-table-wrap">

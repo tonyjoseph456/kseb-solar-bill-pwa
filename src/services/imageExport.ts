@@ -1,5 +1,5 @@
 import type { BillRecord, ZoneKey } from '../types';
-import type { SolarMonthComputedStats } from './solarCalculator';
+import type { SolarMonthComputedStats, SolarYearSummary } from './solarCalculator';
 
 export function sanitizeImageFilename(title: string): string {
   const slug = title
@@ -511,4 +511,222 @@ export async function exportSolarMonthBreakdownAsPng(
   } finally {
     if (svgUrl) URL.revokeObjectURL(svgUrl);
   }
+}
+
+export async function exportSolarYearSummaryAsPng(
+  yearSummary: SolarYearSummary,
+  plantKw: number
+): Promise<void> {
+  const padX = 28;
+  const padTop = 26;
+  const padBottom = 26;
+  const headerH = 44;
+  const tableHeaderH = 36;
+  const rowH = 34;
+
+  const colWidths = [
+    190, // Month / Summary label
+    110, // Units Produced
+    120, // Daily Avg
+    76, // Per kW
+    82, // Max Units
+    82, // Min Units
+    ...Array.from({ length: yearSummary.maxWeekCount }, () => 68),
+  ];
+
+  const contentW = colWidths.reduce((a, b) => a + b, 0);
+  const logicalW = padX * 2 + contentW;
+  const totalRows = yearSummary.rows.length + 2; // months + 2 footer rows
+  const logicalH = padTop + headerH + tableHeaderH + totalRows * rowH + padBottom;
+
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = logicalW * scale;
+  canvas.height = logicalH * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+  ctx.scale(scale, scale);
+
+  // Crisp white card background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, logicalW, logicalH);
+
+  let y = padTop;
+
+  // Title + Months pill
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 18px ${FONT_STACK}`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillText(
+    `${yearSummary.year} Yearly Solar Summary (${plantKw}kW Plant)`,
+    padX,
+    y + 14,
+    contentW - 140
+  );
+
+  const badgeText = `${yearSummary.monthsWithData} month${
+    yearSummary.monthsWithData === 1 ? '' : 's'
+  }`;
+  ctx.font = `700 12px ${FONT_STACK}`;
+  const badgeW = Math.max(82, ctx.measureText(badgeText).width + 22);
+  const badgeH = 24;
+  const badgeX = padX + contentW - badgeW;
+  const badgeY = y + 2;
+  drawRoundedRectPath(ctx, badgeX, badgeY, badgeW, badgeH, 12);
+  ctx.fillStyle = '#ccfbf1';
+  ctx.fill();
+  ctx.fillStyle = '#0f766e';
+  ctx.textAlign = 'center';
+  ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+
+  y += headerH;
+
+  // Compute column right edges (or left edge for col 0)
+  const colStarts: number[] = [];
+  let accX = padX;
+  for (const w of colWidths) {
+    colStarts.push(accX);
+    accX += w;
+  }
+
+  // Table header
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(padX, y, contentW, tableHeaderH);
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padX, y + tableHeaderH);
+  ctx.lineTo(padX + contentW, y + tableHeaderH);
+  ctx.stroke();
+
+  const headers = [
+    'MONTH',
+    'UNITS PRODUCED',
+    'DAILY AVG (UNITS)',
+    'PER KW',
+    'MAX UNITS',
+    'MIN UNITS',
+    ...Array.from({ length: yearSummary.maxWeekCount }, (_, i) => `WEEK ${i + 1}`),
+  ];
+
+  ctx.fillStyle = '#475569';
+  ctx.font = `700 10.5px ${FONT_STACK}`;
+  ctx.textBaseline = 'middle';
+  headers.forEach((h, i) => {
+    if (i === 0) {
+      ctx.textAlign = 'left';
+      ctx.fillText(h, colStarts[0] + 10, y + tableHeaderH / 2);
+    } else {
+      ctx.textAlign = 'right';
+      ctx.fillText(h, colStarts[i] + colWidths[i] - 10, y + tableHeaderH / 2);
+    }
+  });
+  y += tableHeaderH;
+
+  // Month rows
+  for (const row of yearSummary.rows) {
+    const cy = y + rowH / 2;
+    const st = row.stats;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `700 13px ${FONT_STACK}`;
+    ctx.textAlign = 'left';
+    ctx.fillText(row.monthName, colStarts[0] + 10, cy);
+
+    const cells = [
+      st ? fmtNum(st.totalUnits) : '—',
+      st ? st.dailyAverage.toFixed(2) : '—',
+      st ? st.productionPerKw.toFixed(2) : '—',
+      st ? fmtNum(st.maxUnits) : '—',
+      st ? fmtNum(st.minUnits) : '—',
+      ...Array.from({ length: yearSummary.maxWeekCount }, (_, i) => {
+        const wk = st?.weeks[i];
+        return wk ? fmtNum(wk.averageUnits, 1) : '—';
+      }),
+    ];
+
+    ctx.fillStyle = st ? '#1e293b' : '#94a3b8';
+    ctx.font = `500 13px ${FONT_STACK}`;
+    ctx.textAlign = 'right';
+    cells.forEach((val, idx) => {
+      const colIdx = idx + 1;
+      ctx.fillText(val, colStarts[colIdx] + colWidths[colIdx] - 10, cy);
+    });
+
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(padX, y + rowH);
+    ctx.lineTo(padX + contentW, y + rowH);
+    ctx.stroke();
+    y += rowH;
+  }
+
+  // Summary row 1: Total Units
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(padX, y, contentW, rowH);
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(padX, y);
+  ctx.lineTo(padX + contentW, y);
+  ctx.stroke();
+
+  let cy = y + rowH / 2;
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 13px ${FONT_STACK}`;
+  ctx.textAlign = 'left';
+  ctx.fillText('Total Units', colStarts[0] + 10, cy);
+  ctx.textAlign = 'right';
+  ctx.fillText(fmtNum(yearSummary.totalUnits), colStarts[1] + colWidths[1] - 10, cy);
+  ctx.fillStyle = '#64748b';
+  ctx.font = `500 12.5px ${FONT_STACK}`;
+  ctx.fillText(
+    `Monthly Avg: ${fmtNum(yearSummary.monthlyAverageInYear, 1)} kWh / mo (${yearSummary.totalRecordedDays} recorded days)`,
+    padX + contentW - 10,
+    cy
+  );
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padX, y + rowH);
+  ctx.lineTo(padX + contentW, y + rowH);
+  ctx.stroke();
+  y += rowH;
+
+  // Summary row 2: Average Production in {year}
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(padX, y, contentW, rowH);
+  cy = y + rowH / 2;
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 13px ${FONT_STACK}`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`Average Production in ${yearSummary.year}`, colStarts[0] + 10, cy);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#64748b';
+  ctx.font = `500 13px ${FONT_STACK}`;
+  ctx.fillText('—', colStarts[1] + colWidths[1] - 10, cy);
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 13px ${FONT_STACK}`;
+  ctx.fillText(yearSummary.dailyAverageInYear.toFixed(2), colStarts[2] + colWidths[2] - 10, cy);
+  ctx.fillText(
+    yearSummary.productionPerKwInYear.toFixed(2),
+    colStarts[3] + colWidths[3] - 10,
+    cy
+  );
+  ctx.fillStyle = '#64748b';
+  ctx.font = `500 12.5px ${FONT_STACK}`;
+  ctx.fillText('Weighted daily avg across uploaded days', padX + contentW - 10, cy);
+
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.beginPath();
+  ctx.moveTo(padX, y + rowH);
+  ctx.lineTo(padX + contentW, y + rowH);
+  ctx.stroke();
+
+  await downloadCanvasAsPng(
+    canvas,
+    sanitizeImageFilename(`solar-yearly-summary-${yearSummary.year}`)
+  );
 }
