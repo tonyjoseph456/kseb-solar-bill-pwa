@@ -3,12 +3,14 @@ import type {
   AppSettings,
   BillRecord,
   CurrentReadingsDraft,
+  SolarGenerationRecord,
   TariffTables,
   TodAdjustmentMode,
 } from './types';
 import {
   DEFAULT_SETTINGS,
   getAllRecords,
+  getAllSolarRecords,
   getCachedTariffs,
   getReadingsDraft,
   getSettings,
@@ -17,7 +19,9 @@ import {
   saveCachedTariffs,
   savePdfBlob,
   saveSettings,
+  saveSolarRecord,
   softDeleteBillRecord,
+  softDeleteSolarRecord,
 } from './services/db';
 import {
   BUNDLED_FALLBACK_TARIFFS,
@@ -32,6 +36,7 @@ import {
 import { Header, type ActiveTab } from './components/Header';
 import { CalculatorTab } from './components/CalculatorTab';
 import { HistoryTab } from './components/HistoryTab';
+import { SolarTab } from './components/SolarTab';
 import { SettingsTab } from './components/SettingsTab';
 import { PdfUploadModal } from './components/PdfUploadModal';
 
@@ -39,6 +44,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('calculator');
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [records, setRecords] = useState<BillRecord[]>([]);
+  const [solarRecords, setSolarRecords] = useState<SolarGenerationRecord[]>([]);
   const [tariffs, setTariffs] = useState<TariffTables>(BUNDLED_FALLBACK_TARIFFS);
   const [draft, setDraft] = useState<CurrentReadingsDraft | null>(null);
   const [ready, setReady] = useState(false);
@@ -48,10 +54,12 @@ export function App() {
   const [cloudEmail, setCloudEmail] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncMessage, setLastSyncMessage] = useState('');
+  const [solarTableMissing, setSolarTableMissing] = useState(false);
 
   const reloadRecords = useCallback(async () => {
-    const all = await getAllRecords(false);
+    const [all, allSolar] = await Promise.all([getAllRecords(false), getAllSolarRecords(false)]);
     setRecords(all);
+    setSolarRecords(allSolar);
     return all;
   }, []);
 
@@ -76,12 +84,15 @@ export function App() {
         if (user && runSync) {
           setSyncing(true);
           const report = await syncWithSupabase(cfg);
+          setSolarTableMissing(Boolean(report.solarTableMissing));
           const errSuffix =
             report.pdfErrors.length > 0
               ? ` • PDF note: ${report.pdfErrors.join('; ')}`
               : '';
+          const totalPushed = report.pushed + report.solarPushed;
+          const totalPulled = report.pulled + report.solarPulled;
           setLastSyncMessage(
-            `Last synced ${new Date(report.syncedAt).toLocaleTimeString()} (↑${report.pushed} pushed, ↓${report.pulled} pulled${errSuffix})`
+            `Last synced ${new Date(report.syncedAt).toLocaleTimeString()} (↑${totalPushed} pushed, ↓${totalPulled} pulled${errSuffix})`
           );
           await reloadRecords();
         }
@@ -99,16 +110,19 @@ export function App() {
   useEffect(() => {
     let active = true;
     async function init() {
-      const [loadedSettings, loadedRecords, cachedTariffs, loadedDraft] = await Promise.all([
-        getSettings(),
-        getAllRecords(false),
-        getCachedTariffs(),
-        getReadingsDraft(),
-      ]);
+      const [loadedSettings, loadedRecords, loadedSolarRecords, cachedTariffs, loadedDraft] =
+        await Promise.all([
+          getSettings(),
+          getAllRecords(false),
+          getAllSolarRecords(false),
+          getCachedTariffs(),
+          getReadingsDraft(),
+        ]);
       if (!active) return;
 
       setSettings(loadedSettings);
       setRecords(loadedRecords);
+      setSolarRecords(loadedSolarRecords);
       if (cachedTariffs) {
         setTariffs({ ...cachedTariffs, source: 'cache' });
       }
@@ -201,7 +215,27 @@ export function App() {
     await handleUpdateSettings({ ...settings, allowNegativeOwnConsumption: allow });
   }
 
-  const pendingCount = records.filter((r) => r.syncStatus !== 'synced').length;
+  async function handleSaveSolarRecords(incoming: SolarGenerationRecord[]) {
+    for (const rec of incoming) {
+      await saveSolarRecord(rec);
+    }
+    await reloadRecords();
+    if (cloudEmail) {
+      refreshCloudSessionAndSync(settings, true);
+    }
+  }
+
+  async function handleDeleteSolarRecord(id: string) {
+    await softDeleteSolarRecord(id);
+    await reloadRecords();
+    if (cloudEmail) {
+      refreshCloudSessionAndSync(settings, true);
+    }
+  }
+
+  const pendingCount =
+    records.filter((r) => r.syncStatus !== 'synced').length +
+    solarRecords.filter((r) => r.syncStatus !== 'synced').length;
   const consumerLabel =
     baselineRecord?.consumerName || settings.consumerName
       ? `${baselineRecord?.consumerName || settings.consumerName} • ${
@@ -258,6 +292,19 @@ export function App() {
             handleSelectBaseline(id);
             setActiveTab('calculator');
           }}
+        />
+      )}
+
+      {activeTab === 'solar' && (
+        <SolarTab
+          solarRecords={solarRecords}
+          billRecords={records}
+          settings={settings}
+          cloudEmail={cloudEmail}
+          solarTableMissing={solarTableMissing}
+          onUpdateSettings={handleUpdateSettings}
+          onSaveSolarRecords={handleSaveSolarRecords}
+          onDeleteSolarRecord={handleDeleteSolarRecord}
         />
       )}
 

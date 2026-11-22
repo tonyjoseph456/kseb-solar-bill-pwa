@@ -192,6 +192,8 @@ export interface ProsumerCalculationResult {
   };
 }
 
+export type SolarBillMatchMode = 'next_month' | 'same_month';
+
 export interface AppSettings {
   todAdjustmentMode: TodAdjustmentMode;
   allowNegativeOwnConsumption: boolean;
@@ -204,7 +206,30 @@ export interface AppSettings {
   autoSyncOnOpen: boolean;
   uploadPdfToCloud: boolean;
   activeBaselineId?: string; // optional override of which bill's FR auto-fills Previous
+  solarPlantCapacityKw?: number; // default 5 kW
+  solarBillMatchMode?: SolarBillMatchMode; // default 'next_month' (KSEB Bill 01-(M+1) covers Month M)
   updatedAt: string;
+}
+
+export interface SolarDailyReading {
+  date: string; // 'YYYY-MM-DD'
+  day: number; // 1..31
+  units: number;
+}
+
+export interface SolarGenerationRecord {
+  id: string; // e.g. 'solar_2025-05'
+  billingMonth: string; // 'YYYY-MM'
+  billingLabel: string; // 'May 2025'
+  sourceFilename: string;
+  dailyReadings: SolarDailyReading[];
+  importOverride?: number;
+  exportOverride?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+  deleted?: boolean;
 }
 
 export interface CurrentReadingsDraft {

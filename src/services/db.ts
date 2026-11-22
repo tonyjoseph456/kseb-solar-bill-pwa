@@ -1,7 +1,13 @@
-import type { AppSettings, BillRecord, CurrentReadingsDraft, TariffTables } from '../types';
+import type {
+  AppSettings,
+  BillRecord,
+  CurrentReadingsDraft,
+  SolarGenerationRecord,
+  TariffTables,
+} from '../types';
 
 const DB_NAME = 'kseb_prosumer_pwa_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const DEFAULT_SUPABASE_URL = 'https://lmiemxvdwdzgllerwpel.supabase.co';
 const DEFAULT_SUPABASE_PUBLISHABLE_KEY =
@@ -19,6 +25,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_PUBLISHABLE_KEY,
   autoSyncOnOpen: true,
   uploadPdfToCloud: true,
+  solarPlantCapacityKw: 5,
+  solarBillMatchMode: 'next_month',
   updatedAt: new Date(0).toISOString(),
 };
 
@@ -37,6 +45,11 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('solar_records')) {
+        const solarStore = db.createObjectStore('solar_records', { keyPath: 'id' });
+        solarStore.createIndex('by_month', 'billingMonth', { unique: false });
+        solarStore.createIndex('by_updated', 'updatedAt', { unique: false });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -99,6 +112,43 @@ export async function softDeleteBillRecord(id: string): Promise<void> {
   };
   await txPromise('records', 'readwrite', (s) => s.put(updated));
   await txPromise('pdfs', 'readwrite', (s) => s.delete(id));
+}
+
+export async function getAllSolarRecords(
+  includeDeleted = false
+): Promise<SolarGenerationRecord[]> {
+  const all = await txPromise<SolarGenerationRecord[]>('solar_records', 'readonly', (s) =>
+    s.getAll()
+  );
+  const filtered = includeDeleted ? all : all.filter((r) => !r.deleted);
+  return filtered.sort((a, b) => b.billingMonth.localeCompare(a.billingMonth));
+}
+
+export async function saveSolarRecord(
+  record: SolarGenerationRecord
+): Promise<SolarGenerationRecord> {
+  const saved: SolarGenerationRecord = {
+    ...record,
+    updatedAt: record.updatedAt || new Date().toISOString(),
+  };
+  await txPromise('solar_records', 'readwrite', (s) => s.put(saved));
+  return saved;
+}
+
+export async function softDeleteSolarRecord(id: string): Promise<void> {
+  const existing = await txPromise<SolarGenerationRecord | undefined>(
+    'solar_records',
+    'readonly',
+    (s) => s.get(id)
+  );
+  if (!existing) return;
+  const updated: SolarGenerationRecord = {
+    ...existing,
+    deleted: true,
+    updatedAt: new Date().toISOString(),
+    syncStatus: existing.syncStatus === 'synced' ? 'pending' : existing.syncStatus,
+  };
+  await txPromise('solar_records', 'readwrite', (s) => s.put(updated));
 }
 
 export interface StoredPdfEntry {
@@ -284,7 +334,11 @@ export function pickBaselineRecord(
 }
 
 export async function exportDatabaseBackupJSON(): Promise<string> {
-  const [records, settings] = await Promise.all([getAllRecords(false), getSettings()]);
+  const [records, solarRecords, settings] = await Promise.all([
+    getAllRecords(false),
+    getAllSolarRecords(false),
+    getSettings(),
+  ]);
   const pdfEntries: { recordId: string; filename: string; base64: string }[] = [];
   for (const r of records) {
     if (r.hasLocalPdf) {
@@ -297,13 +351,14 @@ export async function exportDatabaseBackupJSON(): Promise<string> {
   }
   return JSON.stringify(
     {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       settings: {
         ...settings,
         supabaseAnonKey: '', // omit key from portable export unless user re-enters
       },
       records,
+      solarRecords,
       pdfs: pdfEntries,
     },
     null,
@@ -323,6 +378,15 @@ export async function importDatabaseBackupJSON(jsonText: string): Promise<number
       syncStatus: rec.syncStatus === 'synced' ? 'pending' : rec.syncStatus || 'pending',
     });
     count++;
+  }
+  if (Array.isArray(parsed.solarRecords)) {
+    for (const sRec of parsed.solarRecords as SolarGenerationRecord[]) {
+      await saveSolarRecord({
+        ...sRec,
+        syncStatus: sRec.syncStatus === 'synced' ? 'pending' : sRec.syncStatus || 'pending',
+      });
+      count++;
+    }
   }
   if (Array.isArray(parsed.pdfs)) {
     for (const p of parsed.pdfs as { recordId: string; filename: string; base64: string }[]) {

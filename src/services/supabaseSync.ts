@@ -1,11 +1,13 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
-import type { AppSettings, BillRecord } from '../types';
+import type { AppSettings, BillRecord, SolarGenerationRecord } from '../types';
 import {
   getAllRecords,
+  getAllSolarRecords,
   getLocalPdfStorageInfo,
   getPdfBlob,
   saveBillRecord,
   savePdfBlob,
+  saveSolarRecord,
   type StoredPdfEntry,
 } from './db';
 
@@ -133,6 +135,9 @@ export interface SyncReport {
   pdfsUploaded: number;
   pdfsDownloaded: number;
   pdfErrors: string[];
+  solarPushed: number;
+  solarPulled: number;
+  solarTableMissing?: boolean;
   syncedAt: string;
 }
 
@@ -384,12 +389,124 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
     pushed++;
   }
 
+  const solarResult = await syncSolarRecords(client, userId);
+
   return {
     pushed,
     pulled,
     pdfsUploaded,
     pdfsDownloaded,
     pdfErrors,
+    solarPushed: solarResult.solarPushed,
+    solarPulled: solarResult.solarPulled,
+    solarTableMissing: solarResult.solarTableMissing,
     syncedAt: new Date().toISOString(),
   };
+}
+
+function isMissingTableError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: string; message?: string };
+  const msg = (e.message || '').toLowerCase();
+  return (
+    e.code === '42P01' ||
+    e.code === 'PGRST205' ||
+    (msg.includes('solar_records') &&
+      (msg.includes('does not exist') || msg.includes('schema cache')))
+  );
+}
+
+async function syncSolarRecords(
+  client: SupabaseClient,
+  userId: string
+): Promise<{ solarPushed: number; solarPulled: number; solarTableMissing?: boolean }> {
+  const { data: remoteRows, error: pullErr } = await client
+    .from('solar_records')
+    .select('id, payload, deleted, updated_at');
+
+  if (pullErr) {
+    if (isMissingTableError(pullErr)) {
+      return { solarPushed: 0, solarPulled: 0, solarTableMissing: true };
+    }
+    throw pullErr;
+  }
+
+  const localRecords = await getAllSolarRecords(true);
+  const localById = new Map(localRecords.map((r) => [r.id, r]));
+  const remoteById = new Map<
+    string,
+    { payload: SolarGenerationRecord; deleted: boolean; updated_at: string }
+  >();
+
+  let solarPulled = 0;
+  for (const row of remoteRows ?? []) {
+    const payload = row.payload as SolarGenerationRecord;
+    remoteById.set(row.id, {
+      payload,
+      deleted: Boolean(row.deleted),
+      updated_at: row.updated_at,
+    });
+
+    const local = localById.get(row.id);
+    const remoteTime = Date.parse(row.updated_at || payload.updatedAt || '0');
+    const localTime = local ? Date.parse(local.updatedAt || '0') : -1;
+
+    if (!local || remoteTime > localTime) {
+      const merged: SolarGenerationRecord = {
+        ...payload,
+        deleted: Boolean(row.deleted),
+        syncStatus: 'synced',
+        updatedAt: row.updated_at || payload.updatedAt,
+      };
+      await saveSolarRecord(merged);
+      localById.set(row.id, merged);
+      solarPulled++;
+    }
+  }
+
+  let solarPushed = 0;
+  for (const local of localById.values()) {
+    const remote = remoteById.get(local.id);
+    const remoteTime = remote
+      ? Date.parse(remote.updated_at || remote.payload.updatedAt || '0')
+      : -1;
+    const localTime = Date.parse(local.updatedAt || '0');
+
+    const needsPush =
+      !remote ||
+      local.syncStatus === 'pending' ||
+      local.syncStatus === 'local' ||
+      localTime > remoteTime;
+
+    if (!needsPush) continue;
+
+    const remotePayload: SolarGenerationRecord = {
+      ...local,
+      syncStatus: 'synced',
+    };
+
+    const { error: upsertErr } = await client.from('solar_records').upsert({
+      id: local.id,
+      user_id: userId,
+      billing_month: local.billingMonth,
+      payload: remotePayload,
+      deleted: Boolean(local.deleted),
+      updated_at: local.updatedAt,
+    });
+
+    if (upsertErr) {
+      if (isMissingTableError(upsertErr)) {
+        return { solarPushed, solarPulled, solarTableMissing: true };
+      }
+      throw upsertErr;
+    }
+
+    await saveSolarRecord({
+      ...local,
+      syncStatus: 'synced',
+    });
+    solarPushed++;
+  }
+
+  return { solarPushed, solarPulled };
 }

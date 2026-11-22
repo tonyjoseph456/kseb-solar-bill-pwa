@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import type { TariffTables } from '../types';
 
-export type ActiveTab = 'calculator' | 'history' | 'settings';
+export type ActiveTab = 'calculator' | 'history' | 'solar' | 'settings';
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -136,6 +136,14 @@ export function Header({
         >
           <History size={16} />
           <span>History</span>
+        </button>
+        <button
+          type="button"
+          className={`nav-tab ${activeTab === 'solar' ? 'active' : ''}`}
+          onClick={() => onSelectTab('solar')}
+        >
+          <Sun size={16} />
+          <span>Solar Data</span>
         </button>
         <button
           type="button"

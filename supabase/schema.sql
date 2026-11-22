@@ -47,6 +47,49 @@ create policy "Users delete own bill records"
   to authenticated
   using ((select auth.uid()) = user_id);
 
+-- Solar inverter daily generation records (per month)
+create table if not exists public.solar_records (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  billing_month text not null,
+  payload jsonb not null,
+  deleted boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_solar_records_user_month
+  on public.solar_records (user_id, billing_month desc);
+
+alter table public.solar_records enable row level security;
+
+revoke all on public.solar_records from anon;
+grant select, insert, update, delete on public.solar_records to authenticated;
+
+drop policy if exists "Users read own solar records" on public.solar_records;
+create policy "Users read own solar records"
+  on public.solar_records for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users insert own solar records" on public.solar_records;
+create policy "Users insert own solar records"
+  on public.solar_records for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users update own solar records" on public.solar_records;
+create policy "Users update own solar records"
+  on public.solar_records for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users delete own solar records" on public.solar_records;
+create policy "Users delete own solar records"
+  on public.solar_records for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 -- User settings / baseline preferences
 create table if not exists public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
