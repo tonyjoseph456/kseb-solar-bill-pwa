@@ -290,6 +290,7 @@ input.input-error {
   font-weight: 600;
   border: 1px solid transparent;
   cursor: pointer;
+  text-decoration: none;
   transition: all 0.15s;
 }
 

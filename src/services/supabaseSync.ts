@@ -1,6 +1,12 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import type { AppSettings, BillRecord } from '../types';
-import { getAllRecords, getPdfBlob, saveBillRecord, savePdfBlob } from './db';
+import {
+  getAllRecords,
+  getPdfBlob,
+  saveBillRecord,
+  savePdfBlob,
+  type StoredPdfEntry,
+} from './db';
 
 let cachedClient: SupabaseClient | null = null;
 let cachedConfigKey = '';
@@ -125,7 +131,41 @@ export interface SyncReport {
   pulled: number;
   pdfsUploaded: number;
   pdfsDownloaded: number;
+  pdfErrors: string[];
   syncedAt: string;
+}
+
+export async function downloadPdfFromCloud(
+  settings: AppSettings,
+  record: BillRecord
+): Promise<StoredPdfEntry> {
+  if (!record.pdfStoragePath) {
+    throw new Error('This PDF was not uploaded to cloud storage yet.');
+  }
+  const client = getSupabaseClient(settings.supabaseUrl, settings.supabaseAnonKey);
+  if (!client) {
+    throw new Error('Cloud sync is not configured.');
+  }
+  const { data: userData } = await client.auth.getUser();
+  if (!userData.user) {
+    throw new Error('Sign in with GitHub in Settings to download synced PDFs.');
+  }
+
+  const { data: pdfBlob, error } = await client.storage
+    .from('bill-pdfs')
+    .download(record.pdfStoragePath);
+  if (error || !pdfBlob) {
+    throw new Error(error?.message || 'Failed to download PDF from cloud storage.');
+  }
+
+  const filename = record.pdfFilename || `${record.billingMonth}.pdf`;
+  await savePdfBlob(record.id, filename, pdfBlob);
+  await saveBillRecord({ ...record, hasLocalPdf: true });
+  const stored = await getPdfBlob(record.id);
+  if (!stored) {
+    throw new Error('Downloaded PDF was empty.');
+  }
+  return stored;
 }
 
 export async function syncWithSupabase(settings: AppSettings): Promise<SyncReport> {
@@ -149,6 +189,7 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
 
   let pulled = 0;
   let pdfsDownloaded = 0;
+  const pdfErrors: string[] = [];
   const remoteById = new Map<
     string,
     { payload: BillRecord; deleted: boolean; updated_at: string }
@@ -167,18 +208,17 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
     const localTime = local ? Date.parse(local.updatedAt || '0') : -1;
 
     if (!local || remoteTime > localTime) {
-      const merged: BillRecord = {
+      const existingPdf = !row.deleted ? await getPdfBlob(row.id) : undefined;
+      let merged: BillRecord = {
         ...payload,
+        hasLocalPdf: Boolean(existingPdf),
         deleted: Boolean(row.deleted),
         syncStatus: 'synced',
         updatedAt: row.updated_at || payload.updatedAt,
       };
-      await saveBillRecord(merged);
-      localById.set(row.id, merged);
-      pulled++;
 
       // Download PDF from Supabase Storage if missing locally
-      if (!merged.deleted && merged.pdfStoragePath && !(await getPdfBlob(merged.id))) {
+      if (!merged.deleted && merged.pdfStoragePath && !existingPdf) {
         try {
           const { data: pdfBlob, error: dlErr } = await client.storage
             .from('bill-pdfs')
@@ -189,17 +229,25 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
               merged.pdfFilename || `${merged.billingMonth}.pdf`,
               pdfBlob
             );
-            await saveBillRecord({ ...merged, hasLocalPdf: true });
+            merged = { ...merged, hasLocalPdf: true };
             pdfsDownloaded++;
+          } else if (dlErr) {
+            pdfErrors.push(`${merged.billingLabel}: ${dlErr.message}`);
           }
         } catch (err) {
-          console.warn('PDF cloud download skipped:', err);
+          pdfErrors.push(
+            `${merged.billingLabel}: ${err instanceof Error ? err.message : 'PDF download failed'}`
+          );
         }
       }
+
+      await saveBillRecord(merged);
+      localById.set(row.id, merged);
+      pulled++;
     }
   }
 
-  // 2. Push newer or unsynced local records
+  // 2. Push newer or unsynced local records (or heal records whose local PDF isn't in cloud yet)
   let pushed = 0;
   let pdfsUploaded = 0;
   for (const local of localById.values()) {
@@ -209,33 +257,43 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
       : -1;
     const localTime = Date.parse(local.updatedAt || '0');
 
+    const localPdf = !local.deleted ? await getPdfBlob(local.id) : undefined;
+    const needsPdfUpload =
+      settings.uploadPdfToCloud &&
+      !local.deleted &&
+      Boolean(localPdf) &&
+      !local.pdfStoragePath;
+
     const needsPush =
-      !remote || local.syncStatus === 'pending' || local.syncStatus === 'local' || localTime > remoteTime;
+      !remote ||
+      local.syncStatus === 'pending' ||
+      local.syncStatus === 'local' ||
+      localTime > remoteTime ||
+      needsPdfUpload;
 
     if (!needsPush) continue;
 
     let pdfStoragePath = local.pdfStoragePath;
-    if (
-      settings.uploadPdfToCloud &&
-      !local.deleted &&
-      local.hasLocalPdf &&
-      !pdfStoragePath
-    ) {
-      const pdf = await getPdfBlob(local.id);
-      if (pdf?.blob) {
-        const path = `${userId}/${local.id}.pdf`;
-        const { error: upErr } = await client.storage
-          .from('bill-pdfs')
-          .upload(path, pdf.blob, { upsert: true, contentType: 'application/pdf' });
-        if (!upErr) {
-          pdfStoragePath = path;
-          pdfsUploaded++;
-        }
+    let pdfUploadFailed = false;
+    if (needsPdfUpload && localPdf) {
+      const path = `${userId}/${local.id}.pdf`;
+      // Pass Uint8Array bytes directly so storage-js sends binary body instead of FormData
+      // (avoids iOS Safari FormData 0-byte Content-Length bug on IDB File/Blob objects).
+      const { error: upErr } = await client.storage
+        .from('bill-pdfs')
+        .upload(path, localPdf.bytes, { upsert: true, contentType: 'application/pdf' });
+      if (!upErr) {
+        pdfStoragePath = path;
+        pdfsUploaded++;
+      } else {
+        pdfUploadFailed = true;
+        pdfErrors.push(`${local.billingLabel}: ${upErr.message}`);
       }
     }
 
-    const syncedPayload: BillRecord = {
+    const remotePayload: BillRecord = {
       ...local,
+      hasLocalPdf: false,
       pdfStoragePath,
       syncStatus: 'synced',
     };
@@ -246,13 +304,18 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
       record_type: local.recordType,
       billing_month: local.billingMonth,
       consumer_no: local.consumerNo,
-      payload: syncedPayload,
+      payload: remotePayload,
       deleted: Boolean(local.deleted),
       updated_at: local.updatedAt,
     });
 
     if (upsertErr) throw upsertErr;
-    await saveBillRecord(syncedPayload);
+    await saveBillRecord({
+      ...local,
+      hasLocalPdf: Boolean(localPdf),
+      pdfStoragePath,
+      syncStatus: pdfUploadFailed ? 'pending' : 'synced',
+    });
     pushed++;
   }
 
@@ -261,6 +324,7 @@ export async function syncWithSupabase(settings: AppSettings): Promise<SyncRepor
     pulled,
     pdfsUploaded,
     pdfsDownloaded,
+    pdfErrors,
     syncedAt: new Date().toISOString(),
   };
 }

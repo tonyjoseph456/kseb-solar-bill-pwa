@@ -76,8 +76,12 @@ export function App() {
         if (user && runSync) {
           setSyncing(true);
           const report = await syncWithSupabase(cfg);
+          const errSuffix =
+            report.pdfErrors.length > 0
+              ? ` • PDF note: ${report.pdfErrors.join('; ')}`
+              : '';
           setLastSyncMessage(
-            `Last synced ${new Date(report.syncedAt).toLocaleTimeString()} (↑${report.pushed} pushed, ↓${report.pulled} pulled)`
+            `Last synced ${new Date(report.syncedAt).toLocaleTimeString()} (↑${report.pushed} pushed, ↓${report.pulled} pulled${errSuffix})`
           );
           await reloadRecords();
         }
@@ -247,6 +251,8 @@ export function App() {
       {activeTab === 'history' && (
         <HistoryTab
           records={records}
+          settings={settings}
+          onReloadRecords={reloadRecords}
           onDeleteRecord={handleDeleteRecord}
           onUseAsBaseline={(id) => {
             handleSelectBaseline(id);

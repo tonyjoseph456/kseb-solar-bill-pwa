@@ -1,16 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BookmarkCheck,
+  Download,
+  ExternalLink,
   Eye,
   FileText,
   Trash2,
   X,
 } from 'lucide-react';
-import type { BillRecord, ZoneKey } from '../types';
+import type { AppSettings, BillRecord, ZoneKey } from '../types';
 import { getPdfBlob } from '../services/db';
+import { downloadPdfFromCloud } from '../services/supabaseSync';
 
 interface HistoryTabProps {
   records: BillRecord[];
+  settings: AppSettings;
+  onReloadRecords: () => Promise<unknown>;
   onDeleteRecord: (id: string) => Promise<void>;
   onUseAsBaseline: (id: string) => void;
 }
@@ -23,6 +28,8 @@ const ZONE_NAMES: { key: ZoneKey; name: string }[] = [
 
 export function HistoryTab({
   records,
+  settings,
+  onReloadRecords,
   onDeleteRecord,
   onUseAsBaseline,
 }: HistoryTabProps) {
@@ -31,6 +38,21 @@ export function HistoryTab({
   );
   const [selected, setSelected] = useState<BillRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadingPdfId, setLoadingPdfId] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState('');
+  const [pdfPreview, setPdfPreview] = useState<{
+    url: string;
+    filename: string;
+    title: string;
+  } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreview?.url) {
+        URL.revokeObjectURL(pdfPreview.url);
+      }
+    };
+  }, [pdfPreview?.url]);
 
   const filtered = records.filter((r) =>
     filterType === 'all' ? true : r.recordType === filterType
@@ -41,13 +63,34 @@ export function HistoryTab({
   const totalAmount = filtered.reduce((acc, r) => acc + r.summary.totalAmount, 0);
 
   async function handleViewPdf(record: BillRecord) {
-    const pdf = await getPdfBlob(record.id);
-    if (!pdf) {
-      alert('Original PDF is not stored locally on this device.');
-      return;
+    setPdfError('');
+    setLoadingPdfId(record.id);
+    try {
+      let pdf = await getPdfBlob(record.id);
+      if (!pdf && record.pdfStoragePath) {
+        pdf = await downloadPdfFromCloud(settings, record);
+        await onReloadRecords();
+      }
+      if (!pdf) {
+        setPdfError(
+          `The PDF for ${record.billingLabel} was not uploaded to cloud storage from the original device yet (likely due to an earlier mobile upload issue). Re-upload that PDF once via "Upload KSEB Bill PDF" to sync it across all devices.`
+        );
+        return;
+      }
+      if (pdfPreview?.url) {
+        URL.revokeObjectURL(pdfPreview.url);
+      }
+      const url = URL.createObjectURL(pdf.blob);
+      setPdfPreview({
+        url,
+        filename: pdf.filename || `${record.billingMonth}.pdf`,
+        title: `${record.billingLabel} — ${pdf.filename || 'KSEB Bill PDF'}`,
+      });
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Unable to open saved PDF.');
+    } finally {
+      setLoadingPdfId(null);
     }
-    const url = URL.createObjectURL(pdf.blob);
-    window.open(url, '_blank');
   }
 
   async function handleDelete(record: BillRecord) {
@@ -83,6 +126,19 @@ export function HistoryTab({
           <div className="val">₹ {totalAmount.toFixed(2)}</div>
         </div>
       </div>
+
+      {pdfError && (
+        <div className="banner banner-warn">
+          <span>{pdfError}</span>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={() => setPdfError('')}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-header">
@@ -178,12 +234,17 @@ export function HistoryTab({
                           <Eye size={14} />
                           View
                         </button>
-                        {rec.hasLocalPdf && (
+                        {(rec.hasLocalPdf || rec.pdfStoragePath) && (
                           <button
                             type="button"
                             className="btn btn-outline btn-sm"
+                            disabled={loadingPdfId === rec.id}
                             onClick={() => handleViewPdf(rec)}
-                            title="Open saved PDF"
+                            title={
+                              rec.hasLocalPdf
+                                ? 'Open saved PDF'
+                                : 'Download & open synced PDF from cloud'
+                            }
                           >
                             <FileText size={14} />
                           </button>
@@ -310,14 +371,15 @@ export function HistoryTab({
 
             <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                {selected.hasLocalPdf && (
+                {(selected.hasLocalPdf || selected.pdfStoragePath) && (
                   <button
                     type="button"
                     className="btn btn-outline"
+                    disabled={loadingPdfId === selected.id}
                     onClick={() => handleViewPdf(selected)}
                   >
                     <FileText size={16} />
-                    Open Original PDF
+                    {loadingPdfId === selected.id ? 'Loading PDF...' : 'Open Original PDF'}
                   </button>
                 )}
               </div>
@@ -335,6 +397,58 @@ export function HistoryTab({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {pdfPreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-panel" style={{ maxWidth: 920 }}>
+            <div className="card-header">
+              <h2 className="card-title">
+                <FileText size={18} />
+                {pdfPreview.title}
+              </h2>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setPdfPreview(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+              <a
+                className="btn btn-primary btn-sm"
+                href={pdfPreview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ExternalLink size={14} />
+                Open in New Tab
+              </a>
+              <a
+                className="btn btn-outline btn-sm"
+                href={pdfPreview.url}
+                download={pdfPreview.filename}
+              >
+                <Download size={14} />
+                Download PDF
+              </a>
+            </div>
+
+            <iframe
+              title={pdfPreview.title}
+              src={pdfPreview.url}
+              style={{
+                width: '100%',
+                height: '68vh',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                background: '#f8fafc',
+              }}
+            />
           </div>
         </div>
       )}

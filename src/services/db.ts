@@ -101,25 +101,79 @@ export async function softDeleteBillRecord(id: string): Promise<void> {
   await txPromise('pdfs', 'readwrite', (s) => s.delete(id));
 }
 
+export interface StoredPdfEntry {
+  recordId: string;
+  filename: string;
+  blob: Blob;
+  bytes: Uint8Array;
+  updatedAt: string;
+}
+
+interface RawStoredPdfRow {
+  recordId: string;
+  filename: string;
+  data?: ArrayBuffer;
+  mimeType?: string;
+  blob?: Blob;
+  updatedAt: string;
+}
+
+async function toArrayBuffer(input: Blob | ArrayBuffer | Uint8Array): Promise<ArrayBuffer> {
+  if (input instanceof ArrayBuffer) return input;
+  if (ArrayBuffer.isView(input)) {
+    return input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength) as ArrayBuffer;
+  }
+  return await input.arrayBuffer();
+}
+
 export async function savePdfBlob(
   recordId: string,
   filename: string,
-  blob: Blob
+  input: Blob | ArrayBuffer | Uint8Array
 ): Promise<void> {
+  const data = await toArrayBuffer(input);
+  if (data.byteLength === 0) {
+    throw new Error('Selected PDF file is empty (0 bytes). Please choose the PDF again.');
+  }
   await txPromise('pdfs', 'readwrite', (s) =>
     s.put({
       recordId,
       filename,
-      blob,
+      data,
+      mimeType: 'application/pdf',
       updatedAt: new Date().toISOString(),
     })
   );
 }
 
-export async function getPdfBlob(
-  recordId: string
-): Promise<{ recordId: string; filename: string; blob: Blob } | undefined> {
-  return txPromise('pdfs', 'readonly', (s) => s.get(recordId));
+export async function getPdfBlob(recordId: string): Promise<StoredPdfEntry | undefined> {
+  const row = await txPromise<RawStoredPdfRow | undefined>('pdfs', 'readonly', (s) =>
+    s.get(recordId)
+  );
+  if (!row) return undefined;
+
+  let buf: ArrayBuffer | null = null;
+  if (row.data instanceof ArrayBuffer) {
+    buf = row.data;
+  } else if (row.blob) {
+    try {
+      buf = await row.blob.arrayBuffer();
+    } catch {
+      buf = null;
+    }
+  }
+
+  if (!buf || buf.byteLength === 0) {
+    return undefined;
+  }
+
+  return {
+    recordId: row.recordId,
+    filename: row.filename,
+    bytes: new Uint8Array(buf),
+    blob: new Blob([buf], { type: row.mimeType || 'application/pdf' }),
+    updatedAt: row.updatedAt,
+  };
 }
 
 export async function getSettings(): Promise<AppSettings> {
