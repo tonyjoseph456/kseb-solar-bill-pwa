@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BookmarkCheck,
   Download,
@@ -10,7 +10,11 @@ import {
 } from 'lucide-react';
 import type { AppSettings, BillRecord, ZoneKey } from '../types';
 import { getPdfBlob } from '../services/db';
-import { downloadPdfFromCloud } from '../services/supabaseSync';
+import {
+  downloadPdfFromCloud,
+  getPdfStorageUsage,
+  type PdfStorageUsage,
+} from '../services/supabaseSync';
 
 interface HistoryTabProps {
   records: BillRecord[];
@@ -26,6 +30,13 @@ const ZONE_NAMES: { key: ZoneKey; name: string }[] = [
   { key: 'PK', name: 'Peak (PK / WPK)' },
 ];
 
+function formatMB(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 100) return `${mb.toFixed(1)} MB`;
+  if (mb >= 1) return `${mb.toFixed(2)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 export function HistoryTab({
   records,
   settings,
@@ -40,6 +51,7 @@ export function HistoryTab({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingPdfId, setLoadingPdfId] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState('');
+  const [storageUsage, setStorageUsage] = useState<PdfStorageUsage | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{
     url: string;
     filename: string;
@@ -54,6 +66,18 @@ export function HistoryTab({
     };
   }, [pdfPreview?.url]);
 
+  useEffect(() => {
+    let active = true;
+    getPdfStorageUsage(settings)
+      .then((info) => {
+        if (active) setStorageUsage(info);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [settings, records]);
+
   const filtered = records.filter((r) =>
     filterType === 'all' ? true : r.recordType === filterType
   );
@@ -61,6 +85,33 @@ export function HistoryTab({
   const totalSolar = filtered.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
   const totalExport = filtered.reduce((acc, r) => acc + r.summary.totalExport, 0);
   const totalAmount = filtered.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    for (const r of records) {
+      const y = r.billingMonth.slice(0, 4);
+      if (/^\d{4}$/.test(y)) years.add(y);
+    }
+    if (years.size === 0) years.add(String(new Date().getFullYear()));
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [records]);
+
+  const [selectedYear, setSelectedYear] = useState<string>(
+    availableYears[0] ?? String(new Date().getFullYear())
+  );
+
+  useEffect(() => {
+    if (!availableYears.includes(selectedYear) && availableYears.length > 0) {
+      setSelectedYear(availableYears[0]);
+    }
+  }, [availableYears, selectedYear]);
+
+  const yearRecords = filtered.filter((r) =>
+    r.billingMonth.startsWith(`${selectedYear}-`)
+  );
+  const yearSolar = yearRecords.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
+  const yearExport = yearRecords.reduce((acc, r) => acc + r.summary.totalExport, 0);
+  const yearAmount = yearRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
 
   async function handleViewPdf(record: BillRecord) {
     setPdfError('');
@@ -108,7 +159,7 @@ export function HistoryTab({
 
   return (
     <div>
-      <div className="grid-4" style={{ marginBottom: 14 }}>
+      <div className="grid-5" style={{ marginBottom: 10 }}>
         <div className="metric-box">
           <div className="label">Saved Months / Records</div>
           <div className="val">{filtered.length}</div>
@@ -124,6 +175,53 @@ export function HistoryTab({
         <div className="metric-box">
           <div className="label">Total Billed Amount</div>
           <div className="val">₹ {totalAmount.toFixed(2)}</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">
+            PDF Space Left ({storageUsage?.source === 'cloud' ? 'Cloud' : 'Local'})
+          </div>
+          <div className="val">
+            {storageUsage ? `${formatMB(storageUsage.remainingBytes)}` : 'Checking...'}
+          </div>
+          {storageUsage && (
+            <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
+              {formatMB(storageUsage.usedBytes)} / {formatMB(storageUsage.quotaBytes)} used (
+              {storageUsage.fileCount} PDF{storageUsage.fileCount === 1 ? '' : 's'})
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid-4" style={{ marginBottom: 14 }}>
+        <div className="metric-box">
+          <div className="label">Select Year</div>
+          <select
+            aria-label="Filter yearly summary by year"
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+            style={{ marginTop: 4, padding: '6px 8px', fontWeight: 700 }}
+          >
+            {availableYears.map((yr) => (
+              <option key={yr} value={yr}>
+                {yr}
+              </option>
+            ))}
+          </select>
+          <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 4 }}>
+            {yearRecords.length} record{yearRecords.length === 1 ? '' : 's'} in {selectedYear}
+          </div>
+        </div>
+        <div className="metric-box">
+          <div className="label">{selectedYear} Solar Generated</div>
+          <div className="val">{yearSolar.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">{selectedYear} Exported</div>
+          <div className="val">{yearExport.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">{selectedYear} Billed Amount</div>
+          <div className="val">₹ {yearAmount.toFixed(2)}</div>
         </div>
       </div>
 
@@ -188,6 +286,7 @@ export function HistoryTab({
                   <th className="num">Export</th>
                   <th className="num">Solar Gen</th>
                   <th className="num">Billed</th>
+                  <th className="num">Banked</th>
                   <th className="num">Amount</th>
                   <th>Sync</th>
                   <th className="num">Actions</th>
@@ -213,6 +312,15 @@ export function HistoryTab({
                     <td className="num">{rec.summary.totalExport}</td>
                     <td className="num">{rec.summary.solarGenerated}</td>
                     <td className="num">{rec.summary.billedUnits}</td>
+                    <td className="num">
+                      {(rec.bankClosing ?? 0) > 0 ? (
+                        <strong style={{ color: 'var(--primary)' }}>
+                          {rec.bankClosing ?? 0}
+                        </strong>
+                      ) : (
+                        0
+                      )}
+                    </td>
                     <td className="num">
                       <strong>₹ {rec.summary.totalAmount.toFixed(2)}</strong>
                     </td>

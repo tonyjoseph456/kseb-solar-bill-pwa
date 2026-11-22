@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient, type User } from '@supabase/supabase
 import type { AppSettings, BillRecord } from '../types';
 import {
   getAllRecords,
+  getLocalPdfStorageInfo,
   getPdfBlob,
   saveBillRecord,
   savePdfBlob,
@@ -133,6 +134,70 @@ export interface SyncReport {
   pdfsDownloaded: number;
   pdfErrors: string[];
   syncedAt: string;
+}
+
+export interface PdfStorageUsage {
+  usedBytes: number;
+  quotaBytes: number;
+  remainingBytes: number;
+  fileCount: number;
+  source: 'cloud' | 'local';
+}
+
+const SUPABASE_FREE_STORAGE_BYTES = 1024 * 1024 * 1024; // 1 GB Supabase free Storage tier
+
+export async function getPdfStorageUsage(settings: AppSettings): Promise<PdfStorageUsage> {
+  const client = getSupabaseClient(settings.supabaseUrl, settings.supabaseAnonKey);
+  if (client) {
+    try {
+      const { data: userData } = await client.auth.getUser();
+      if (userData.user) {
+        const userId = userData.user.id;
+        let offset = 0;
+        let usedBytes = 0;
+        let fileCount = 0;
+
+        while (true) {
+          const { data, error } = await client.storage
+            .from('bill-pdfs')
+            .list(userId, { limit: 1000, offset });
+          if (error) throw error;
+          const items = data ?? [];
+          for (const item of items) {
+            if (item.id !== null) {
+              const size = Number(
+                (item.metadata as { size?: number } | null | undefined)?.size ?? 0
+              );
+              if (Number.isFinite(size)) usedBytes += size;
+              fileCount++;
+            }
+          }
+          if (items.length < 1000) break;
+          offset += 1000;
+        }
+
+        return {
+          usedBytes,
+          quotaBytes: SUPABASE_FREE_STORAGE_BYTES,
+          remainingBytes: Math.max(0, SUPABASE_FREE_STORAGE_BYTES - usedBytes),
+          fileCount,
+          source: 'cloud',
+        };
+      }
+    } catch (err) {
+      console.warn('Cloud PDF storage check failed, falling back to local:', err);
+    }
+  }
+
+  const local = await getLocalPdfStorageInfo();
+  const quotaBytes = local.quotaBytes ?? SUPABASE_FREE_STORAGE_BYTES;
+  return {
+    usedBytes: local.usedBytes,
+    quotaBytes,
+    remainingBytes: Math.max(0, quotaBytes - local.usedBytes),
+    fileCount: local.fileCount,
+    source: 'local',
+  };
 }
 
 export async function downloadPdfFromCloud(

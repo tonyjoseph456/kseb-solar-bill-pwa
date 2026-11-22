@@ -176,6 +176,40 @@ export async function getPdfBlob(recordId: string): Promise<StoredPdfEntry | und
   };
 }
 
+export async function getLocalPdfStorageInfo(): Promise<{
+  usedBytes: number;
+  fileCount: number;
+  quotaBytes: number | null;
+}> {
+  const rows = await txPromise<RawStoredPdfRow[]>('pdfs', 'readonly', (s) => s.getAll());
+  let usedBytes = 0;
+  let fileCount = 0;
+  for (const row of rows) {
+    const size =
+      row.data instanceof ArrayBuffer
+        ? row.data.byteLength
+        : row.blob
+        ? row.blob.size
+        : 0;
+    if (size > 0) {
+      usedBytes += size;
+      fileCount++;
+    }
+  }
+  let quotaBytes: number | null = null;
+  if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      if (typeof est.quota === 'number' && Number.isFinite(est.quota)) {
+        quotaBytes = est.quota;
+      }
+    } catch {
+      quotaBytes = null;
+    }
+  }
+  return { usedBytes, fileCount, quotaBytes };
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const row = await txPromise<{ key: string; value: AppSettings } | undefined>(
     'meta',

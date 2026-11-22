@@ -198,6 +198,12 @@ body {
   gap: 10px;
 }
 
+.grid-5 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 10px;
+}
+
 /* Banners */
 .banner {
   display: flex;
