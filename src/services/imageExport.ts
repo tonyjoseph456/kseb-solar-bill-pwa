@@ -1,4 +1,5 @@
 import type { BillRecord, ZoneKey } from '../types';
+import type { SolarMonthComputedStats } from './solarCalculator';
 
 export function sanitizeImageFilename(title: string): string {
   const slug = title
@@ -243,4 +244,271 @@ export async function exportBillRecordAsPng(record: BillRecord): Promise<void> {
     `kseb-bill-${record.billingMonth}-${record.recordType === 'official_bill' ? 'pdf' : 'estimate'}`
   );
   await downloadCanvasAsPng(canvas, filename);
+}
+
+function drawRoundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+function fmtNum(val: number | null | undefined, maxDecimals = 2): string {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '—';
+  return String(Number(val.toFixed(maxDecimals)));
+}
+
+export async function exportSolarMonthBreakdownAsPng(
+  stats: SolarMonthComputedStats,
+  showEstimated: boolean,
+  weeklySvgEl: SVGSVGElement | null
+): Promise<void> {
+  const logicalW = 1000;
+  const padX = 28;
+  const padTop = 24;
+  const padBottom = 24;
+  const contentW = logicalW - padX * 2;
+  const bannerH = 44;
+  const kpiGap = 10;
+  const kpiH = 74;
+  const splitGap = 16;
+  const leftW = 450;
+  const rightW = contentW - leftW - splitGap;
+
+  const kpiItems: { label: string; value: string; sub?: string }[] = [
+    { label: 'Total Units Produced', value: fmtNum(stats.totalUnits) },
+    { label: 'Daily Average Production', value: stats.dailyAverage.toFixed(2) },
+    ...(showEstimated
+      ? [{ label: 'Estimated Production', value: fmtNum(stats.estimatedProduction) }]
+      : []),
+    {
+      label: 'Import',
+      value: fmtNum(stats.importUnits),
+      sub:
+        stats.matchedBillMonth && stats.record.importOverride === undefined
+          ? `From ${stats.matchedBillMonth} bill`
+          : undefined,
+    },
+    { label: 'Export', value: fmtNum(stats.exportUnits) },
+    {
+      label: 'Average Import',
+      value: fmtNum(stats.averageImport),
+      sub:
+        stats.exactAverageImport !== null
+          ? `Exact: ${stats.exactAverageImport.toFixed(2)}`
+          : undefined,
+    },
+  ];
+
+  const statCells: { head: string; value: string }[] = [
+    { head: 'Max Production', value: fmtNum(stats.maxUnits) },
+    { head: 'Min Production', value: fmtNum(stats.minUnits) },
+    ...stats.weeks.map((wk) => ({
+      head: `Week ${wk.weekNumber} (${wk.rangeLabel})`,
+      value: fmtNum(wk.averageUnits, 1),
+    })),
+    { head: 'Production Per kW', value: stats.productionPerKw.toFixed(2) },
+  ];
+
+  const statRowsCount = Math.ceil(statCells.length / 2);
+  const statCellH = 60;
+  const leftGridH = statRowsCount * statCellH;
+
+  let weeklyChartImg: HTMLImageElement | null = null;
+  let svgUrl: string | null = null;
+  let chartRenderW = rightW - 24;
+  let chartRenderH = Math.round(chartRenderW * (220 / 480));
+
+  if (weeklySvgEl) {
+    const vb = weeklySvgEl.viewBox.baseVal;
+    const svgW = vb && vb.width > 0 ? vb.width : 480;
+    const svgH = vb && vb.height > 0 ? vb.height : 220;
+    chartRenderH = Math.round((chartRenderW * svgH) / svgW);
+
+    const clone = weeklySvgEl.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', String(svgW));
+    clone.setAttribute('height', String(svgH));
+    clone.style.fontFamily = FONT_STACK;
+
+    const svgBlob = new Blob([new XMLSerializer().serializeToString(clone)], {
+      type: 'image/svg+xml;charset=utf-8',
+    });
+    svgUrl = URL.createObjectURL(svgBlob);
+  }
+
+  try {
+    if (svgUrl) {
+      weeklyChartImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('Could not render weekly chart SVG.'));
+        image.src = svgUrl;
+      });
+    }
+
+    const rightBoxH = weeklyChartImg ? 42 + chartRenderH + 12 : leftGridH;
+    const splitH = Math.max(leftGridH, rightBoxH);
+
+    const logicalH =
+      padTop + bannerH + 14 + kpiH + 16 + splitH + padBottom;
+
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = logicalW * scale;
+    canvas.height = logicalH * scale;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+    ctx.scale(scale, scale);
+
+    // White page background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, logicalW, logicalH);
+
+    let y = padTop;
+
+    // 1. Month green banner
+    drawRoundedRectPath(ctx, padX, y, contentW, bannerH, 10);
+    ctx.fillStyle = '#bbf7d0';
+    ctx.fill();
+    ctx.strokeStyle = '#86efac';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#14532d';
+    ctx.font = `800 17px ${FONT_STACK}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${stats.monthName} ${stats.year}`, padX + 14, y + bannerH / 2);
+
+    ctx.font = `600 12px ${FONT_STACK}`;
+    ctx.textAlign = 'right';
+    ctx.fillText(
+      `${stats.recordedDays}/${stats.daysInMonth} days • ${stats.record.sourceFilename}`,
+      padX + contentW - 14,
+      y + bannerH / 2
+    );
+
+    y += bannerH + 14;
+
+    // 2. KPI boxes strip
+    const cols = kpiItems.length;
+    const boxW = (contentW - (cols - 1) * kpiGap) / cols;
+    kpiItems.forEach((item, idx) => {
+      const bx = padX + idx * (boxW + kpiGap);
+      drawRoundedRectPath(ctx, bx, y, boxW, kpiH, 10);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fill();
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = `600 11px ${FONT_STACK}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.label, bx + 10, y + 18, boxW - 20);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `800 17px ${FONT_STACK}`;
+      ctx.fillText(item.value, bx + 10, y + 43, boxW - 20);
+
+      if (item.sub) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = `500 10px ${FONT_STACK}`;
+        ctx.fillText(item.sub, bx + 10, y + 61, boxW - 20);
+      }
+    });
+
+    y += kpiH + 16;
+
+    // 3a. Left Stat Grid
+    const colW = leftW / 2;
+    drawRoundedRectPath(ctx, padX, y, leftW, leftGridH, 10);
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(padX, y, leftW, leftGridH);
+
+    statCells.forEach((cell, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const cx = padX + col * colW;
+      const cy = y + row * statCellH;
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(cx, cy, colW, 26);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `700 11px ${FONT_STACK}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cell.head, cx + colW / 2, cy + 13, colW - 10);
+
+      ctx.font = `700 15px ${FONT_STACK}`;
+      ctx.fillText(cell.value, cx + colW / 2, cy + 43, colW - 10);
+
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + 26);
+      ctx.lineTo(cx + colW, cy + 26);
+      ctx.moveTo(cx, cy + statCellH);
+      ctx.lineTo(cx + colW, cy + statCellH);
+      if (col === 0) {
+        ctx.moveTo(cx + colW, cy);
+        ctx.lineTo(cx + colW, cy + statCellH);
+      }
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    drawRoundedRectPath(ctx, padX, y, leftW, leftGridH, 10);
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // 3b. Right Weekly Line Chart Card
+    if (weeklyChartImg) {
+      const rx = padX + leftW + splitGap;
+      drawRoundedRectPath(ctx, rx, y, rightW, rightBoxH, 10);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `700 14px ${FONT_STACK}`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        `Weekly Average Production in ${stats.monthName}`,
+        rx + 12,
+        y + 20,
+        rightW - 24
+      );
+
+      ctx.drawImage(weeklyChartImg, rx + 12, y + 36, chartRenderW, chartRenderH);
+    }
+
+    await downloadCanvasAsPng(
+      canvas,
+      sanitizeImageFilename(`solar-breakdown-${stats.record.billingMonth}`)
+    );
+  } finally {
+    if (svgUrl) URL.revokeObjectURL(svgUrl);
+  }
 }

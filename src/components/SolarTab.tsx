@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   Edit3,
   FileSpreadsheet,
   Sun,
@@ -22,6 +23,7 @@ import {
   computeSolarYearSummary,
   parseSolarInverterCsv,
 } from '../services/solarCalculator';
+import { exportSolarMonthBreakdownAsPng } from '../services/imageExport';
 import {
   SolarDailyAvgLineChart,
   SolarWeeklyLineChart,
@@ -83,6 +85,7 @@ export function SolarTab({
   onDeleteSolarRecord,
 }: SolarTabProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const weeklyChartRef = useRef<HTMLDivElement | null>(null);
   const plantKw =
     settings.solarPlantCapacityKw && settings.solarPlantCapacityKw > 0
       ? settings.solarPlantCapacityKw
@@ -93,6 +96,7 @@ export function SolarTab({
   const [uploadStatus, setUploadStatus] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [savingBreakdownImage, setSavingBreakdownImage] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
 
   const [editingMeterLink, setEditingMeterLink] = useState(false);
@@ -283,6 +287,28 @@ export function SolarTab({
     }
   }
 
+  const nowYm = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const showEstimatedProduction =
+    selectedStats !== null &&
+    selectedStats.recordedDays < selectedStats.daysInMonth &&
+    selectedStats.record.billingMonth >= nowYm;
+
+  async function handleSaveMonthlyImage() {
+    if (!selectedStats) return;
+    setSavingBreakdownImage(true);
+    setUploadError('');
+    try {
+      const svgEl = weeklyChartRef.current?.querySelector('svg') ?? null;
+      await exportSolarMonthBreakdownAsPng(selectedStats, showEstimatedProduction, svgEl);
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Unable to save Monthly Breakdown image.'
+      );
+    } finally {
+      setSavingBreakdownImage(false);
+    }
+  }
+
   return (
     <div>
       {cloudEmail && solarTableMissing && (
@@ -461,7 +487,249 @@ export function SolarTab({
         </div>
       ) : (
         <>
-          {/* Yearly Tabular Summary (Reference Image 3) */}
+          {/* 2. Yearly Charts: Column Chart + Daily Average Line Chart */}
+          <div className="grid-2" style={{ marginBottom: 14 }}>
+            <div className="card" style={{ marginBottom: 0 }}>
+              <SolarYearlyColumnChart
+                year={selectedYear}
+                plantCapacityKw={plantKw}
+                rows={yearSummary.rows}
+              />
+            </div>
+            <div className="card" style={{ marginBottom: 0 }}>
+              <SolarDailyAvgLineChart
+                year={selectedYear}
+                plantCapacityKw={plantKw}
+                rows={yearSummary.rows}
+              />
+            </div>
+          </div>
+
+          {/* 3. Monthly Detail View */}
+          {selectedStats && (
+            <div className="card">
+              <div className="card-header" style={{ flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Calendar size={18} color="#0f766e" />
+                  <h2 className="card-title">Monthly Breakdown</h2>
+                  <div className="solar-month-pills">
+                    {yearMonthStats.map((st) => (
+                      <button
+                        key={st.record.billingMonth}
+                        type="button"
+                        className={`btn btn-sm ${
+                          st.record.billingMonth === selectedMonth ? 'btn-primary' : 'btn-outline'
+                        }`}
+                        onClick={() => setSelectedMonth(st.record.billingMonth)}
+                      >
+                        {st.monthName.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={savingBreakdownImage}
+                    onClick={handleSaveMonthlyImage}
+                    title="Save this Monthly Breakdown as a PNG image"
+                  >
+                    <Download size={14} />
+                    {savingBreakdownImage ? 'Saving...' : 'Save Image'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setEditingMeterLink((v) => !v)}
+                    title="Override Import/Export if KSEB bill PDF is not uploaded yet"
+                  >
+                    <Edit3 size={14} />
+                    {editingMeterLink ? 'Cancel' : 'Edit Import/Export'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger-outline btn-sm"
+                    onClick={() => handleDeleteMonth(selectedStats.record)}
+                    title="Delete this month's solar CSV"
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              <div className="solar-month-banner">
+                <span>
+                  {selectedStats.monthName} {selectedStats.year}
+                </span>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, opacity: 0.85 }}>
+                  {selectedStats.recordedDays}/{selectedStats.daysInMonth} days •{' '}
+                  {selectedStats.record.sourceFilename}
+                </span>
+              </div>
+
+              {editingMeterLink && (
+                <div className="banner banner-info" style={{ marginBottom: 12 }}>
+                  <div style={{ flex: '1 1 180px' }}>
+                    <strong>Import / Export Override ({selectedStats.monthName}):</strong>{' '}
+                    <span className="text-muted">
+                      Leave blank to auto-fill from KSEB Bill History (
+                      {matchMode === 'next_month' ? 'next month bill' : 'same month bill'}).
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
+                    <div style={{ width: 100 }}>
+                      <label className="field-label">Import (kWh)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="Auto"
+                        value={importDraft}
+                        onChange={(e) => setImportDraft(e.target.value)}
+                      />
+                    </div>
+                    <div style={{ width: 100 }}>
+                      <label className="field-label">Export (kWh)</label>
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="Auto"
+                        value={exportDraft}
+                        onChange={(e) => setExportDraft(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={handleSaveMeterOverrides}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Top Metric Strip (Estimated Production hidden once month is completed) */}
+              <div
+                className={showEstimatedProduction ? 'grid-6' : 'grid-5'}
+                style={{ marginBottom: 14 }}
+              >
+                <div className="metric-box">
+                  <div className="label">Total Units Produced</div>
+                  <div className="val">{formatMetric(selectedStats.totalUnits)}</div>
+                </div>
+                <div className="metric-box">
+                  <div className="label">Daily Average Production</div>
+                  <div className="val">{selectedStats.dailyAverage.toFixed(2)}</div>
+                </div>
+                {showEstimatedProduction && (
+                  <div className="metric-box">
+                    <div className="label">Estimated Production</div>
+                    <div className="val">{formatMetric(selectedStats.estimatedProduction)}</div>
+                  </div>
+                )}
+                <div className="metric-box">
+                  <div className="label">Import</div>
+                  <div className="val">{formatMetric(selectedStats.importUnits)}</div>
+                  {selectedStats.matchedBillMonth &&
+                    selectedStats.record.importOverride === undefined && (
+                      <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                        From {selectedStats.matchedBillMonth} bill
+                      </div>
+                    )}
+                </div>
+                <div className="metric-box">
+                  <div className="label">Export</div>
+                  <div className="val">{formatMetric(selectedStats.exportUnits)}</div>
+                </div>
+                <div className="metric-box">
+                  <div className="label">Average Import</div>
+                  <div className="val">{formatMetric(selectedStats.averageImport)}</div>
+                  {selectedStats.exactAverageImport !== null && (
+                    <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                      Exact: {selectedStats.exactAverageImport.toFixed(2)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Left Stats + Right Weekly Line Chart */}
+              <div className="solar-month-split">
+                <div className="solar-stat-grid">
+                  <div className="solar-stat-cell">
+                    <div className="solar-stat-head">Max Production</div>
+                    <div className="solar-stat-val">{formatMetric(selectedStats.maxUnits)}</div>
+                  </div>
+                  <div className="solar-stat-cell">
+                    <div className="solar-stat-head">Min Production</div>
+                    <div className="solar-stat-val">{formatMetric(selectedStats.minUnits)}</div>
+                  </div>
+                  {selectedStats.weeks.map((wk) => (
+                    <div className="solar-stat-cell" key={wk.weekNumber}>
+                      <div className="solar-stat-head">
+                        Week {wk.weekNumber} Average ({wk.rangeLabel})
+                      </div>
+                      <div className="solar-stat-val">
+                        {formatMetric(wk.averageUnits, 1)}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="solar-stat-cell">
+                    <div className="solar-stat-head">Production Per kW</div>
+                    <div className="solar-stat-val">
+                      {selectedStats.productionPerKw.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+
+                <div ref={weeklyChartRef}>
+                  <SolarWeeklyLineChart
+                    monthName={selectedStats.monthName}
+                    weeks={selectedStats.weeks}
+                  />
+                </div>
+              </div>
+
+              {/* Collapsible Daily CSV Readings */}
+              <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setShowDailyReadings((v) => !v)}
+                >
+                  {showDailyReadings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  {showDailyReadings ? 'Hide' : 'Show'} Daily CSV Readings (
+                  {selectedStats.recordedDays} days)
+                </button>
+
+                {showDailyReadings && (
+                  <div style={{ marginTop: 10, overflowX: 'auto' }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th className="num">Units Produced (kWh)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedStats.record.dailyReadings.map((d) => (
+                          <tr key={d.date}>
+                            <td>{d.date.split('-').reverse().join('-')}</td>
+                            <td className="num">
+                              <strong>{d.units}</strong>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 4. Yearly Tabular Summary (Bottom of page) */}
           <div className="card">
             <div className="card-header">
               <div>
@@ -555,233 +823,6 @@ export function SolarTab({
               </table>
             </div>
           </div>
-
-          {/* Yearly Charts: Column Chart + Daily Average Line Chart (Reference Image 4) */}
-          <div className="grid-2" style={{ marginBottom: 14 }}>
-            <div className="card" style={{ marginBottom: 0 }}>
-              <SolarYearlyColumnChart
-                year={selectedYear}
-                plantCapacityKw={plantKw}
-                rows={yearSummary.rows}
-              />
-            </div>
-            <div className="card" style={{ marginBottom: 0 }}>
-              <SolarDailyAvgLineChart
-                year={selectedYear}
-                plantCapacityKw={plantKw}
-                rows={yearSummary.rows}
-              />
-            </div>
-          </div>
-
-          {/* Monthly Detail View (Reference Images 1 & 2) */}
-          {selectedStats && (
-            <div className="card">
-              <div className="card-header" style={{ flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <Calendar size={18} color="#0f766e" />
-                  <h2 className="card-title">Monthly Breakdown</h2>
-                  <div className="solar-month-pills">
-                    {yearMonthStats.map((st) => (
-                      <button
-                        key={st.record.billingMonth}
-                        type="button"
-                        className={`btn btn-sm ${
-                          st.record.billingMonth === selectedMonth ? 'btn-primary' : 'btn-outline'
-                        }`}
-                        onClick={() => setSelectedMonth(st.record.billingMonth)}
-                      >
-                        {st.monthName.slice(0, 3)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    onClick={() => setEditingMeterLink((v) => !v)}
-                    title="Override Import/Export if KSEB bill PDF is not uploaded yet"
-                  >
-                    <Edit3 size={14} />
-                    {editingMeterLink ? 'Cancel' : 'Edit Import/Export'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-danger-outline btn-sm"
-                    onClick={() => handleDeleteMonth(selectedStats.record)}
-                    title="Delete this month's solar CSV"
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                </div>
-              </div>
-
-              <div className="solar-month-banner">
-                <span>
-                  {selectedStats.monthName} {selectedStats.year}
-                </span>
-                <span style={{ fontSize: '0.78rem', fontWeight: 600, opacity: 0.85 }}>
-                  {selectedStats.recordedDays}/{selectedStats.daysInMonth} days •{' '}
-                  {selectedStats.record.sourceFilename}
-                </span>
-              </div>
-
-              {editingMeterLink && (
-                <div className="banner banner-info" style={{ marginBottom: 12 }}>
-                  <div style={{ flex: '1 1 180px' }}>
-                    <strong>Import / Export Override ({selectedStats.monthName}):</strong>{' '}
-                    <span className="text-muted">
-                      Leave blank to auto-fill from KSEB Bill History (
-                      {matchMode === 'next_month' ? 'next month bill' : 'same month bill'}).
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
-                    <div style={{ width: 100 }}>
-                      <label className="field-label">Import (kWh)</label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="Auto"
-                        value={importDraft}
-                        onChange={(e) => setImportDraft(e.target.value)}
-                      />
-                    </div>
-                    <div style={{ width: 100 }}>
-                      <label className="field-label">Export (kWh)</label>
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="Auto"
-                        value={exportDraft}
-                        onChange={(e) => setExportDraft(e.target.value)}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      onClick={handleSaveMeterOverrides}
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 6-Metric Top Strip matching Reference Images 1 & 2 */}
-              <div className="grid-6" style={{ marginBottom: 14 }}>
-                <div className="metric-box">
-                  <div className="label">Total Units Produced</div>
-                  <div className="val">{formatMetric(selectedStats.totalUnits)}</div>
-                </div>
-                <div className="metric-box">
-                  <div className="label">Daily Average Production</div>
-                  <div className="val">{selectedStats.dailyAverage.toFixed(2)}</div>
-                </div>
-                <div className="metric-box">
-                  <div className="label">Estimated Production</div>
-                  <div className="val">{formatMetric(selectedStats.estimatedProduction)}</div>
-                </div>
-                <div className="metric-box">
-                  <div className="label">Import</div>
-                  <div className="val">{formatMetric(selectedStats.importUnits)}</div>
-                  {selectedStats.matchedBillMonth &&
-                    selectedStats.record.importOverride === undefined && (
-                      <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                        From {selectedStats.matchedBillMonth} bill
-                      </div>
-                    )}
-                </div>
-                <div className="metric-box">
-                  <div className="label">Export</div>
-                  <div className="val">{formatMetric(selectedStats.exportUnits)}</div>
-                </div>
-                <div className="metric-box">
-                  <div className="label">Average Import</div>
-                  <div className="val">{formatMetric(selectedStats.averageImport)}</div>
-                  {selectedStats.exactAverageImport !== null && (
-                    <div className="text-muted" style={{ fontSize: '0.7rem' }}>
-                      Exact: {selectedStats.exactAverageImport.toFixed(2)}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Left Stats + Right Weekly Line Chart */}
-              <div className="solar-month-split">
-                <div className="solar-stat-grid">
-                  <div className="solar-stat-cell">
-                    <div className="solar-stat-head">Max Production</div>
-                    <div className="solar-stat-val">{formatMetric(selectedStats.maxUnits)}</div>
-                  </div>
-                  <div className="solar-stat-cell">
-                    <div className="solar-stat-head">Min Production</div>
-                    <div className="solar-stat-val">{formatMetric(selectedStats.minUnits)}</div>
-                  </div>
-                  {selectedStats.weeks.map((wk) => (
-                    <div className="solar-stat-cell" key={wk.weekNumber}>
-                      <div className="solar-stat-head">
-                        Week {wk.weekNumber} Average ({wk.rangeLabel})
-                      </div>
-                      <div className="solar-stat-val">
-                        {formatMetric(wk.averageUnits, 1)}
-                      </div>
-                    </div>
-                  ))}
-                  <div className="solar-stat-cell">
-                    <div className="solar-stat-head">Production Per kW</div>
-                    <div className="solar-stat-val">
-                      {selectedStats.productionPerKw.toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <SolarWeeklyLineChart
-                    monthName={selectedStats.monthName}
-                    weeks={selectedStats.weeks}
-                  />
-                </div>
-              </div>
-
-              {/* Collapsible Daily CSV Readings */}
-              <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => setShowDailyReadings((v) => !v)}
-                >
-                  {showDailyReadings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  {showDailyReadings ? 'Hide' : 'Show'} Daily CSV Readings (
-                  {selectedStats.recordedDays} days)
-                </button>
-
-                {showDailyReadings && (
-                  <div style={{ marginTop: 10, overflowX: 'auto' }}>
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th className="num">Units Produced (kWh)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedStats.record.dailyReadings.map((d) => (
-                          <tr key={d.date}>
-                            <td>{d.date.split('-').reverse().join('-')}</td>
-                            <td className="num">
-                              <strong>{d.units}</strong>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
