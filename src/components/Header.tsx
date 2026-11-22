@@ -114,7 +114,7 @@ export function Header({
               onClick={() => onSelectTab('settings')}
             >
               <CloudOff size={13} />
-              <span>Local DB (Set up Free Cloud Sync)</span>
+              <span>Local DB (Sign In to Sync)</span>
             </button>
           )}
         </div>

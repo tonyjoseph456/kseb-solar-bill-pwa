@@ -1,24 +1,15 @@
 import { useRef, useState } from 'react';
 import {
-  Check,
   Cloud,
-  Copy,
   Database,
   Download,
-  LogIn,
   LogOut,
   RefreshCw,
   Upload,
 } from 'lucide-react';
-import schemaSql from '../../supabase/schema.sql?raw';
 import type { AppSettings, TariffTables } from '../types';
 import { exportDatabaseBackupJSON, importDatabaseBackupJSON } from '../services/db';
-import {
-  signInCloud,
-  signInWithGitHubCloud,
-  signOutCloud,
-  signUpCloud,
-} from '../services/supabaseSync';
+import { signInWithGitHubCloud, signOutCloud } from '../services/supabaseSync';
 
 interface SettingsTabProps {
   settings: AppSettings;
@@ -48,84 +39,16 @@ export function SettingsTab({
   onReloadRecords,
 }: SettingsTabProps) {
   const backupFileRef = useRef<HTMLInputElement | null>(null);
-  const [supabaseUrl, setSupabaseUrl] = useState(settings.supabaseUrl);
-  const [supabaseKey, setSupabaseKey] = useState(settings.supabaseAnonKey);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [authStatus, setAuthStatus] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [copiedSql, setCopiedSql] = useState(false);
-  const [showSchema, setShowSchema] = useState(false);
-
-  async function handleSaveCloudKeys() {
-    const next = await Promise.resolve({
-      ...settings,
-      supabaseUrl: supabaseUrl.trim(),
-      supabaseAnonKey: supabaseKey.trim(),
-    });
-    await onUpdateSettings(next);
-    setAuthStatus('Saved Supabase project URL and anon key.');
-    await onAuthChanged();
-  }
-
-  async function handleSignIn(mode: 'signin' | 'signup') {
-    setAuthLoading(true);
-    setAuthStatus('');
-    try {
-      const merged: AppSettings = {
-        ...settings,
-        supabaseUrl: supabaseUrl.trim(),
-        supabaseAnonKey: supabaseKey.trim(),
-      };
-      await onUpdateSettings(merged);
-
-      if (mode === 'signin') {
-        const user = await signInCloud(merged, email.trim(), password);
-        setAuthStatus(`Signed in as ${user.email}.`);
-      } else {
-        const res = await signUpCloud(merged, email.trim(), password);
-        setAuthStatus(
-          res.needsConfirmation
-            ? 'Account created! Check your email to confirm, then sign in.'
-            : `Signed up & logged in as ${res.user?.email}.`
-        );
-      }
-      await onAuthChanged();
-    } catch (err) {
-      setAuthStatus(err instanceof Error ? err.message : 'Authentication failed.');
-    } finally {
-      setAuthLoading(false);
-    }
-  }
 
   async function handleGitHubSignIn() {
     setAuthLoading(true);
     setAuthStatus('');
     try {
-      const merged: AppSettings = {
-        ...settings,
-        supabaseUrl: supabaseUrl.trim(),
-        supabaseAnonKey: supabaseKey.trim(),
-      };
-      await onUpdateSettings(merged);
-      await signInWithGitHubCloud(merged);
+      await signInWithGitHubCloud(settings);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'GitHub sign-in failed.';
-      if (/not enabled|unsupported provider/i.test(msg)) {
-        const projectRef = supabaseUrl.match(/https:\/\/([a-z0-9]+)\.supabase\.co/i)?.[1];
-        const callbackUrl = supabaseUrl
-          ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1/callback`
-          : 'https://<project>.supabase.co/auth/v1/callback';
-        setAuthStatus(
-          `GitHub OAuth is not enabled in this Supabase project yet. Enable it in Supabase Dashboard (${
-            projectRef
-              ? `Authentication -> Providers -> GitHub for project ${projectRef}`
-              : 'Authentication -> Providers -> GitHub'
-          }) with callback URL ${callbackUrl}, OR create an Email + Password account below.`
-        );
-      } else {
-        setAuthStatus(msg);
-      }
+      setAuthStatus(err instanceof Error ? err.message : 'GitHub sign-in failed.');
       setAuthLoading(false);
     }
   }
@@ -134,12 +57,6 @@ export function SettingsTab({
     await signOutCloud(settings);
     await onAuthChanged();
     setAuthStatus('Signed out from cloud sync (local DB remains intact).');
-  }
-
-  async function handleCopySql() {
-    await navigator.clipboard.writeText(schemaSql);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2500);
   }
 
   async function handleExportBackup() {
@@ -162,12 +79,12 @@ export function SettingsTab({
 
   return (
     <div>
-      {/* Free Cloud Sync */}
+      {/* Cloud Sync */}
       <div className="card">
         <div className="card-header">
           <h2 className="card-title">
             <Cloud size={18} />
-            Free Cloud Sync (Supabase Free Tier)
+            Cloud Sync
           </h2>
           {cloudEmail ? (
             <span className="badge badge-green">Connected: {cloudEmail}</span>
@@ -176,59 +93,9 @@ export function SettingsTab({
           )}
         </div>
         <p className="text-muted" style={{ marginTop: 0 }}>
-          Sync your monthly PDF bills, meter readings, and calculations across phone and desktop
-          using a free Supabase project (500 MB DB + 1 GB PDF storage).
+          Sign in with GitHub to sync your monthly PDF bills, meter readings, and calculations
+          across your phone and desktop.
         </p>
-
-        <div className="grid-2" style={{ marginBottom: 12 }}>
-          <div>
-            <label className="field-label">Supabase Project URL</label>
-            <input
-              type="text"
-              placeholder="https://your-project-id.supabase.co"
-              value={supabaseUrl}
-              onChange={(e) => setSupabaseUrl(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="field-label">Supabase Publishable / Anon Key</label>
-            <input
-              type="password"
-              placeholder="sb_publishable_..."
-              value={supabaseKey}
-              onChange={(e) => setSupabaseKey(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
-          <button type="button" className="btn btn-outline btn-sm" onClick={handleSaveCloudKeys}>
-            Save Project Keys
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            onClick={() => setShowSchema((s) => !s)}
-          >
-            {showSchema ? 'Hide SQL Setup' : 'Show Free Setup & SQL Schema'}
-          </button>
-          <button type="button" className="btn btn-outline btn-sm" onClick={handleCopySql}>
-            {copiedSql ? <Check size={14} /> : <Copy size={14} />}
-            {copiedSql ? 'Copied schema.sql' : 'Copy schema.sql'}
-          </button>
-        </div>
-
-        {showSchema && (
-          <div style={{ marginBottom: 14 }}>
-            <ol className="text-muted" style={{ paddingLeft: 18, marginBottom: 8 }}>
-              <li>Create a free project at supabase.com.</li>
-              <li>Open <strong>SQL Editor</strong>, paste <code>schema.sql</code> below, and click Run.</li>
-              <li>Copy your <strong>Project URL</strong> &amp; <strong>anon public key</strong> from Project Settings → API above.</li>
-              <li>Create your login email &amp; password below to sync across devices.</li>
-            </ol>
-            <div className="code-box">{schemaSql}</div>
-          </div>
-        )}
 
         {cloudEmail ? (
           <div
@@ -277,61 +144,18 @@ export function SettingsTab({
           </div>
         ) : (
           <div style={{ paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <button
-                type="button"
-                className="btn btn-outline"
-                disabled={authLoading}
-                onClick={handleGitHubSignIn}
-                style={{ background: '#0f172a', color: '#ffffff', borderColor: '#0f172a' }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.91c.58.11.79-.25.79-.55v-2.16c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
-                </svg>
-                Sign in with GitHub
-              </button>
-              <span className="text-muted">or use Email &amp; Password:</span>
-            </div>
-
-            <div className="grid-3" style={{ alignItems: 'end' }}>
-              <div>
-                <label className="field-label">Account Email</label>
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="field-label">Password</label>
-                <input
-                  type="password"
-                  placeholder="Min 6 characters"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={authLoading}
-                  onClick={() => handleSignIn('signin')}
-                >
-                  <LogIn size={14} />
-                  Sign In
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  disabled={authLoading}
-                  onClick={() => handleSignIn('signup')}
-                >
-                  Create Account
-                </button>
-              </div>
-            </div>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={authLoading}
+              onClick={handleGitHubSignIn}
+              style={{ background: '#0f172a', color: '#ffffff', borderColor: '#0f172a' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.91c.58.11.79-.25.79-.55v-2.16c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.8.55A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+              </svg>
+              Sign in with GitHub
+            </button>
           </div>
         )}
 
