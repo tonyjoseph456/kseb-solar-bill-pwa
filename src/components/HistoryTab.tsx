@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import type { AppSettings, BillRecord, ZoneKey } from '../types';
 import { getPdfBlob } from '../services/db';
-import { exportBillRecordAsPng } from '../services/imageExport';
+import { exportBillArchiveAsPng, exportBillRecordAsPng } from '../services/imageExport';
 import {
   downloadPdfFromCloud,
   getPdfStorageUsage,
@@ -89,6 +89,7 @@ export function HistoryTab({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingPdfId, setLoadingPdfId] = useState<string | null>(null);
   const [savingImage, setSavingImage] = useState(false);
+  const [savingArchiveImage, setSavingArchiveImage] = useState(false);
   const [pdfError, setPdfError] = useState('');
 
   async function handleSaveBillImage(record: BillRecord) {
@@ -99,6 +100,18 @@ export function HistoryTab({
       setPdfError(err instanceof Error ? err.message : 'Unable to save bill image.');
     } finally {
       setSavingImage(false);
+    }
+  }
+
+  async function handleSaveArchiveImage() {
+    if (displayedRecords.length === 0) return;
+    setSavingArchiveImage(true);
+    try {
+      await exportBillArchiveAsPng(displayedRecords, yearLabel, filterType);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Unable to save archive image.');
+    } finally {
+      setSavingArchiveImage(false);
     }
   }
   const [storageUsage, setStorageUsage] = useState<PdfStorageUsage | null>(null);
@@ -345,6 +358,19 @@ export function HistoryTab({
             >
               Estimates ({yearEstCount})
             </button>
+            {displayedRecords.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                disabled={savingArchiveImage}
+                onClick={handleSaveArchiveImage}
+                title="Save archive table as PNG image"
+              >
+                <Download size={14} />
+                {savingArchiveImage ? 'Saving...' : 'Save Image'}
+              </button>
+            )}
           </div>
         </div>
 

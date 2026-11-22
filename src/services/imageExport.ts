@@ -730,3 +730,152 @@ export async function exportSolarYearSummaryAsPng(
     sanitizeImageFilename(`solar-yearly-summary-${yearSummary.year}`)
   );
 }
+
+export async function exportBillArchiveAsPng(
+  records: BillRecord[],
+  yearLabel: string,
+  filterType: 'all' | 'official_bill' | 'meter_estimate' = 'all'
+): Promise<void> {
+  const padX = 28;
+  const padTop = 26;
+  const padBottom = 26;
+  const headerH = 44;
+  const tableHeaderH = 36;
+  const rowH = 44;
+
+  const colWidths = [
+    165, // Month + Consumer No
+    86, // Import
+    86, // Export
+    98, // Solar Gen
+    86, // Billed
+    86, // Banked
+    120, // Amount
+  ];
+  const contentW = colWidths.reduce((a, b) => a + b, 0);
+  const logicalW = padX * 2 + contentW;
+  const logicalH = padTop + headerH + tableHeaderH + records.length * rowH + padBottom;
+
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = logicalW * scale;
+  canvas.height = logicalH * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, logicalW, logicalH);
+
+  let y = padTop;
+
+  // Card Title & Count Pill
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 18px ${FONT_STACK}`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillText(
+    `Monthly Consumption & Bill Archive (${yearLabel})`,
+    padX,
+    y + 14,
+    contentW - 150
+  );
+
+  const typeNoun =
+    filterType === 'official_bill'
+      ? 'PDF bill'
+      : filterType === 'meter_estimate'
+        ? 'estimate'
+        : 'record';
+  const badgeText = `${records.length} ${typeNoun}${records.length === 1 ? '' : 's'}`;
+  ctx.font = `700 12px ${FONT_STACK}`;
+  const badgeW = Math.max(82, ctx.measureText(badgeText).width + 22);
+  const badgeH = 24;
+  const badgeX = padX + contentW - badgeW;
+  const badgeY = y + 2;
+  drawRoundedRectPath(ctx, badgeX, badgeY, badgeW, badgeH, 12);
+  ctx.fillStyle = '#ccfbf1';
+  ctx.fill();
+  ctx.fillStyle = '#0f766e';
+  ctx.textAlign = 'center';
+  ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+
+  y += headerH;
+
+  const colStarts: number[] = [];
+  let accX = padX;
+  for (const w of colWidths) {
+    colStarts.push(accX);
+    accX += w;
+  }
+
+  // Table header (without Type, Sync, or Actions columns)
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(padX, y, contentW, tableHeaderH);
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padX, y + tableHeaderH);
+  ctx.lineTo(padX + contentW, y + tableHeaderH);
+  ctx.stroke();
+
+  const headers = ['MONTH', 'IMPORT', 'EXPORT', 'SOLAR GEN', 'BILLED', 'BANKED', 'AMOUNT'];
+  ctx.fillStyle = '#475569';
+  ctx.font = `700 10.5px ${FONT_STACK}`;
+  ctx.textBaseline = 'middle';
+  headers.forEach((h, i) => {
+    if (i === 0) {
+      ctx.textAlign = 'left';
+      ctx.fillText(h, colStarts[0] + 10, y + tableHeaderH / 2);
+    } else {
+      ctx.textAlign = 'right';
+      ctx.fillText(h, colStarts[i] + colWidths[i] - 10, y + tableHeaderH / 2);
+    }
+  });
+  y += tableHeaderH;
+
+  // Rows
+  for (const rec of records) {
+    const cy = y + rowH / 2;
+    const subLine = rec.consumerNo || rec.consumerName || '';
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `700 13px ${FONT_STACK}`;
+    if (subLine) {
+      ctx.fillText(rec.billingLabel, colStarts[0] + 10, y + 15, colWidths[0] - 16);
+      ctx.fillStyle = '#64748b';
+      ctx.font = `500 11px ${FONT_STACK}`;
+      ctx.fillText(subLine, colStarts[0] + 10, y + 31, colWidths[0] - 16);
+    } else {
+      ctx.fillText(rec.billingLabel, colStarts[0] + 10, cy, colWidths[0] - 16);
+    }
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#1e293b';
+    ctx.font = `500 13px ${FONT_STACK}`;
+    ctx.fillText(String(rec.summary.totalImport), colStarts[1] + colWidths[1] - 10, cy);
+    ctx.fillText(String(rec.summary.totalExport), colStarts[2] + colWidths[2] - 10, cy);
+    ctx.fillText(String(rec.summary.solarGenerated), colStarts[3] + colWidths[3] - 10, cy);
+    ctx.fillText(String(rec.summary.billedUnits), colStarts[4] + colWidths[4] - 10, cy);
+
+    const banked = rec.bankClosing ?? 0;
+    ctx.fillStyle = banked > 0 ? '#0f766e' : '#1e293b';
+    ctx.font = `${banked > 0 ? '700' : '500'} 13px ${FONT_STACK}`;
+    ctx.fillText(String(banked), colStarts[5] + colWidths[5] - 10, cy);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `700 13px ${FONT_STACK}`;
+    ctx.fillText(`₹ ${rec.summary.totalAmount.toFixed(2)}`, colStarts[6] + colWidths[6] - 10, cy);
+
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(padX, y + rowH);
+    ctx.lineTo(padX + contentW, y + rowH);
+    ctx.stroke();
+    y += rowH;
+  }
+
+  await downloadCanvasAsPng(canvas, sanitizeImageFilename(`kseb-bill-archive-${yearLabel}`));
+}
