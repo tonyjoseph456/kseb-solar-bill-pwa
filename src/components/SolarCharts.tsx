@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, Maximize2, X } from 'lucide-react';
 import type { SolarWeekSummary, SolarYearTableRow } from '../services/solarCalculator';
+import { downloadCanvasAsPng, sanitizeImageFilename } from '../services/imageExport';
 
 interface ChartPoint {
   label: string;
@@ -30,14 +31,6 @@ interface ChartFrameProps {
   allowExpand?: boolean;
   bordered?: boolean;
   renderSvg: (enlarged: boolean) => ReactNode;
-}
-
-function sanitizeChartFilename(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  return `${slug || 'solar-chart'}.png`;
 }
 
 async function exportChartSvgAsPng(svgEl: SVGSVGElement, title: string): Promise<void> {
@@ -89,28 +82,7 @@ async function exportChartSvgAsPng(svgEl: SVGSVGElement, title: string): Promise
 
     ctx.drawImage(img, padX, titleAreaH, svgW, svgH);
 
-    const pngBlob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/png')
-    );
-
-    const filename = sanitizeChartFilename(title);
-    if (pngBlob) {
-      const dlUrl = URL.createObjectURL(pngBlob);
-      const a = document.createElement('a');
-      a.href = dlUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(dlUrl), 1000);
-    } else {
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    }
+    await downloadCanvasAsPng(canvas, sanitizeImageFilename(title));
   } finally {
     URL.revokeObjectURL(svgUrl);
   }

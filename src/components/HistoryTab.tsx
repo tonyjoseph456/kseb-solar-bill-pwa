@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { AppSettings, BillRecord, ZoneKey } from '../types';
 import { getPdfBlob } from '../services/db';
+import { exportBillRecordAsPng } from '../services/imageExport';
 import {
   downloadPdfFromCloud,
   getPdfStorageUsage,
@@ -87,7 +88,19 @@ export function HistoryTab({
   const [selected, setSelected] = useState<BillRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadingPdfId, setLoadingPdfId] = useState<string | null>(null);
+  const [savingImage, setSavingImage] = useState(false);
   const [pdfError, setPdfError] = useState('');
+
+  async function handleSaveBillImage(record: BillRecord) {
+    setSavingImage(true);
+    try {
+      await exportBillRecordAsPng(record);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Unable to save bill image.');
+    } finally {
+      setSavingImage(false);
+    }
+  }
   const [storageUsage, setStorageUsage] = useState<PdfStorageUsage | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{
     url: string;
@@ -553,13 +566,26 @@ export function HistoryTab({
                   Bank Opening: {selected.bankOpening} → Closing: {selected.bankClosing}
                 </div>
               </div>
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                onClick={() => setSelected(null)}
-              >
-                <X size={16} />
-              </button>
+              <div style={{ display: 'inline-flex', gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={savingImage}
+                  onClick={() => handleSaveBillImage(selected)}
+                  title="Save bill summary as PNG image"
+                >
+                  <Download size={14} />
+                  {savingImage ? 'Saving...' : 'Save Image'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setSelected(null)}
+                  aria-label="Close bill breakdown modal"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
             <h3 style={{ fontSize: '0.92rem', margin: '10px 0 6px' }}>
