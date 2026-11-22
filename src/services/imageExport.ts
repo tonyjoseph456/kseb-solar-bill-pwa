@@ -269,6 +269,70 @@ function fmtNum(val: number | null | undefined, maxDecimals = 2): string {
   return String(Number(val.toFixed(maxDecimals)));
 }
 
+interface MetricBoxItem {
+  label: string;
+  value: string;
+  sub?: string;
+}
+
+function drawMetricRow(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  totalW: number,
+  gap: number,
+  boxH: number,
+  items: MetricBoxItem[]
+) {
+  const cols = items.length;
+  if (cols === 0) return;
+  const boxW = (totalW - (cols - 1) * gap) / cols;
+  items.forEach((item, idx) => {
+    const bx = x + idx * (boxW + gap);
+    drawRoundedRectPath(ctx, bx, y, boxW, boxH, 10);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fill();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = `600 11px ${FONT_STACK}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.label, bx + 10, y + 18, boxW - 20);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `800 17px ${FONT_STACK}`;
+    ctx.fillText(item.value, bx + 10, y + 43, boxW - 20);
+
+    if (item.sub) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = `500 10.5px ${FONT_STACK}`;
+      ctx.fillText(item.sub, bx + 10, y + 61, boxW - 20);
+    }
+  });
+}
+
+function drawRightPillBadge(
+  ctx: CanvasRenderingContext2D,
+  rightEdgeX: number,
+  topY: number,
+  text: string
+) {
+  ctx.font = `700 12px ${FONT_STACK}`;
+  const badgeW = Math.max(82, ctx.measureText(text).width + 24);
+  const badgeH = 26;
+  const badgeX = rightEdgeX - badgeW;
+  drawRoundedRectPath(ctx, badgeX, topY, badgeW, badgeH, 13);
+  ctx.fillStyle = '#ccfbf1';
+  ctx.fill();
+  ctx.fillStyle = '#0f766e';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, badgeX + badgeW / 2, topY + badgeH / 2);
+}
+
 export async function exportSolarMonthBreakdownAsPng(
   stats: SolarMonthComputedStats,
   showEstimated: boolean,
@@ -404,33 +468,7 @@ export async function exportSolarMonthBreakdownAsPng(
     y += bannerH + 14;
 
     // 2. KPI boxes strip
-    const cols = kpiItems.length;
-    const boxW = (contentW - (cols - 1) * kpiGap) / cols;
-    kpiItems.forEach((item, idx) => {
-      const bx = padX + idx * (boxW + kpiGap);
-      drawRoundedRectPath(ctx, bx, y, boxW, kpiH, 10);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fill();
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = '#64748b';
-      ctx.font = `600 11px ${FONT_STACK}`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(item.label, bx + 10, y + 18, boxW - 20);
-
-      ctx.fillStyle = '#0f172a';
-      ctx.font = `800 17px ${FONT_STACK}`;
-      ctx.fillText(item.value, bx + 10, y + 43, boxW - 20);
-
-      if (item.sub) {
-        ctx.fillStyle = '#64748b';
-        ctx.font = `500 10px ${FONT_STACK}`;
-        ctx.fillText(item.sub, bx + 10, y + 61, boxW - 20);
-      }
-    });
+    drawMetricRow(ctx, padX, y, contentW, kpiGap, kpiH, kpiItems);
 
     y += kpiH + 16;
 
@@ -870,4 +908,219 @@ export async function exportBillArchiveAsPng(
   }
 
   await downloadCanvasAsPng(canvas, sanitizeImageFilename(`kseb-bill-archive-${yearLabel}`));
+}
+
+export interface HistorySummarySnapshot {
+  yearLabel: string;
+  totals: {
+    count: number;
+    solar: number;
+    imported: number;
+    exported: number;
+    amount: number;
+    avgBill: number;
+  };
+  yearTotals: {
+    count: number;
+    solar: number;
+    imported: number;
+    exported: number;
+    amount: number;
+    avgBill: number;
+  };
+}
+
+export async function exportHistorySummaryAsPng(
+  snapshot: HistorySummarySnapshot
+): Promise<void> {
+  const logicalW = 1020;
+  const padX = 28;
+  const padTop = 24;
+  const padBottom = 26;
+  const headerH = 42;
+  const boxH = 74;
+  const rowGap = 12;
+  const cardGap = 10;
+  const contentW = logicalW - padX * 2;
+  const logicalH = padTop + headerH + boxH + rowGap + boxH + padBottom;
+
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = logicalW * scale;
+  canvas.height = logicalH * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, logicalW, logicalH);
+
+  let y = padTop;
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 18px ${FONT_STACK}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    `KSEB Consumption & Billing Summary (${snapshot.yearLabel})`,
+    padX,
+    y + 13,
+    contentW - 180
+  );
+
+  drawRightPillBadge(
+    ctx,
+    padX + contentW,
+    y,
+    `${snapshot.totals.count} month${snapshot.totals.count === 1 ? '' : 's'} total`
+  );
+
+  y += headerH;
+
+  // Overall totals row (5 boxes)
+  drawMetricRow(ctx, padX, y, contentW, cardGap, boxH, [
+    { label: 'Total Solar Generated', value: `${snapshot.totals.solar.toFixed(0)} kWh` },
+    { label: 'Total Imported', value: `${snapshot.totals.imported.toFixed(0)} kWh` },
+    { label: 'Total Exported', value: `${snapshot.totals.exported.toFixed(0)} kWh` },
+    { label: 'Total Billed Amount', value: `₹ ${snapshot.totals.amount.toFixed(2)}` },
+    { label: 'Average Monthly Bill', value: `₹ ${snapshot.totals.avgBill.toFixed(2)}` },
+  ]);
+
+  y += boxH + rowGap;
+
+  // Selected year row (6 boxes)
+  drawMetricRow(ctx, padX, y, contentW, cardGap, boxH, [
+    {
+      label: 'Selected Year',
+      value: snapshot.yearLabel,
+      sub: `${snapshot.yearTotals.count} record${snapshot.yearTotals.count === 1 ? '' : 's'} in ${snapshot.yearLabel}`,
+    },
+    {
+      label: `${snapshot.yearLabel} Solar Generated`,
+      value: `${snapshot.yearTotals.solar.toFixed(0)} kWh`,
+    },
+    {
+      label: `${snapshot.yearLabel} Imported`,
+      value: `${snapshot.yearTotals.imported.toFixed(0)} kWh`,
+    },
+    {
+      label: `${snapshot.yearLabel} Exported`,
+      value: `${snapshot.yearTotals.exported.toFixed(0)} kWh`,
+    },
+    {
+      label: `${snapshot.yearLabel} Billed Amount`,
+      value: `₹ ${snapshot.yearTotals.amount.toFixed(2)}`,
+    },
+    {
+      label: `${snapshot.yearLabel} Avg Monthly Bill`,
+      value: `₹ ${snapshot.yearTotals.avgBill.toFixed(2)}`,
+    },
+  ]);
+
+  await downloadCanvasAsPng(
+    canvas,
+    sanitizeImageFilename(`kseb-billing-summary-${snapshot.yearLabel}`)
+  );
+}
+
+export interface SolarOverviewSnapshot {
+  plantKw: number;
+  selectedYear: number;
+  lifetime: {
+    totalUnits: number;
+    dailyAvg: number;
+    monthlyAvg: number;
+    perKw: number;
+  };
+  yearSummary: SolarYearSummary;
+}
+
+export async function exportSolarOverviewAsPng(
+  snapshot: SolarOverviewSnapshot
+): Promise<void> {
+  const logicalW = 860;
+  const padX = 28;
+  const padTop = 24;
+  const padBottom = 26;
+  const headerH = 44;
+  const boxH = 76;
+  const rowGap = 10;
+  const cardGap = 10;
+  const contentW = logicalW - padX * 2;
+  const logicalH = padTop + headerH + boxH + rowGap + boxH + padBottom;
+
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = logicalW * scale;
+  canvas.height = logicalH * scale;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context is unavailable.');
+
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, logicalW, logicalH);
+
+  let y = padTop;
+
+  // Title + "Selected Year - {year}" pill (omits upload text, upload button, kW field, link dropdown, Saved Months box)
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 18px ${FONT_STACK}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    `Solar Inverter Generation (${snapshot.plantKw}kW Plant)`,
+    padX,
+    y + 13,
+    contentW - 190
+  );
+
+  drawRightPillBadge(ctx, padX + contentW, y, `Selected Year - ${snapshot.selectedYear}`);
+
+  y += headerH;
+
+  // Lifetime row (3 cards — Saved Solar Months omitted)
+  drawMetricRow(ctx, padX, y, contentW, cardGap, boxH, [
+    {
+      label: 'Total Units Produced (All Time)',
+      value: `${fmtNum(snapshot.lifetime.totalUnits)} kWh`,
+    },
+    {
+      label: 'Average Production Till Now',
+      value: `${snapshot.lifetime.dailyAvg.toFixed(2)} u/day`,
+      sub: `${fmtNum(snapshot.lifetime.monthlyAvg, 1)} kWh / month`,
+    },
+    {
+      label: 'Daily Production Per kW',
+      value: `${snapshot.lifetime.perKw.toFixed(2)} u/kW`,
+    },
+  ]);
+
+  y += boxH + rowGap;
+
+  // Selected Year row (3 cards)
+  drawMetricRow(ctx, padX, y, contentW, cardGap, boxH, [
+    {
+      label: `Total Units Produced (${snapshot.selectedYear})`,
+      value: `${fmtNum(snapshot.yearSummary.totalUnits)} kWh`,
+    },
+    {
+      label: `Average Production (${snapshot.selectedYear})`,
+      value: `${snapshot.yearSummary.dailyAverageInYear.toFixed(2)} u/day`,
+      sub: `${fmtNum(snapshot.yearSummary.monthlyAverageInYear, 1)} kWh / month`,
+    },
+    {
+      label: `Daily Production Per kW (${snapshot.selectedYear})`,
+      value: `${snapshot.yearSummary.productionPerKwInYear.toFixed(2)} u/kW`,
+      sub: `${snapshot.yearSummary.monthsWithData} month${
+        snapshot.yearSummary.monthsWithData === 1 ? '' : 's'
+      } (${snapshot.yearSummary.totalRecordedDays} days)`,
+    },
+  ]);
+
+  await downloadCanvasAsPng(
+    canvas,
+    sanitizeImageFilename(`solar-inverter-generation-${snapshot.selectedYear}`)
+  );
 }

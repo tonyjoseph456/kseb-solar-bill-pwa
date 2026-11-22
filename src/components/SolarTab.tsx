@@ -25,6 +25,7 @@ import {
 } from '../services/solarCalculator';
 import {
   exportSolarMonthBreakdownAsPng,
+  exportSolarOverviewAsPng,
   exportSolarYearSummaryAsPng,
 } from '../services/imageExport';
 import {
@@ -101,6 +102,7 @@ export function SolarTab({
   const [uploading, setUploading] = useState(false);
   const [savingBreakdownImage, setSavingBreakdownImage] = useState(false);
   const [savingYearImage, setSavingYearImage] = useState(false);
+  const [savingOverviewImage, setSavingOverviewImage] = useState(false);
   const [sqlCopied, setSqlCopied] = useState(false);
 
   const [editingMeterLink, setEditingMeterLink] = useState(false);
@@ -326,6 +328,26 @@ export function SolarTab({
     }
   }
 
+  async function handleSaveOverviewImage() {
+    if (allStats.length === 0) return;
+    setSavingOverviewImage(true);
+    setUploadError('');
+    try {
+      await exportSolarOverviewAsPng({
+        plantKw,
+        selectedYear,
+        lifetime: lifetimeTotals,
+        yearSummary,
+      });
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Unable to save Solar Generation summary image.'
+      );
+    } finally {
+      setSavingOverviewImage(false);
+    }
+  }
+
   return (
     <div>
       {cloudEmail && solarTableMissing && (
@@ -356,7 +378,7 @@ export function SolarTab({
             </p>
           </div>
 
-          <div>
+          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               ref={fileInputRef}
               type="file"
@@ -365,6 +387,18 @@ export function SolarTab({
               style={{ display: 'none' }}
               onChange={(e) => handleCsvFiles(e.target.files)}
             />
+            {allStats.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                disabled={savingOverviewImage}
+                onClick={handleSaveOverviewImage}
+                title="Save Solar Inverter Generation summary as PNG image"
+              >
+                <Download size={14} />
+                {savingOverviewImage ? 'Saving...' : 'Save Image'}
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-primary"

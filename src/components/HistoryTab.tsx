@@ -10,7 +10,11 @@ import {
 } from 'lucide-react';
 import type { AppSettings, BillRecord, ZoneKey } from '../types';
 import { getPdfBlob } from '../services/db';
-import { exportBillArchiveAsPng, exportBillRecordAsPng } from '../services/imageExport';
+import {
+  exportBillArchiveAsPng,
+  exportBillRecordAsPng,
+  exportHistorySummaryAsPng,
+} from '../services/imageExport';
 import {
   downloadPdfFromCloud,
   getPdfStorageUsage,
@@ -90,6 +94,7 @@ export function HistoryTab({
   const [loadingPdfId, setLoadingPdfId] = useState<string | null>(null);
   const [savingImage, setSavingImage] = useState(false);
   const [savingArchiveImage, setSavingArchiveImage] = useState(false);
+  const [savingSummaryImage, setSavingSummaryImage] = useState(false);
   const [pdfError, setPdfError] = useState('');
 
   async function handleSaveBillImage(record: BillRecord) {
@@ -112,6 +117,17 @@ export function HistoryTab({
       setPdfError(err instanceof Error ? err.message : 'Unable to save archive image.');
     } finally {
       setSavingArchiveImage(false);
+    }
+  }
+
+  async function handleSaveSummaryImage() {
+    setSavingSummaryImage(true);
+    try {
+      await exportHistorySummaryAsPng({ yearLabel, totals, yearTotals });
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Unable to save summary image.');
+    } finally {
+      setSavingSummaryImage(false);
     }
   }
   const [storageUsage, setStorageUsage] = useState<PdfStorageUsage | null>(null);
@@ -246,6 +262,32 @@ export function HistoryTab({
               {storageUsage.fileCount} PDF{storageUsage.fileCount === 1 ? '' : 's'})
             </div>
           </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        <span className="text-muted" style={{ fontWeight: 700, fontSize: '0.82rem' }}>
+          Consumption &amp; Billing Summary ({yearLabel})
+        </span>
+        {totals.count > 0 && (
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            disabled={savingSummaryImage}
+            onClick={handleSaveSummaryImage}
+            title="Save overall & yearly summary cards as PNG image"
+          >
+            <Download size={14} />
+            {savingSummaryImage ? 'Saving...' : 'Save Image'}
+          </button>
         )}
       </div>
 
