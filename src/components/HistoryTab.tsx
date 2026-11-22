@@ -101,17 +101,30 @@ export function HistoryTab({
   );
 
   useEffect(() => {
-    if (!availableYears.includes(selectedYear) && availableYears.length > 0) {
+    if (
+      selectedYear !== 'ALL' &&
+      !availableYears.includes(selectedYear) &&
+      availableYears.length > 0
+    ) {
       setSelectedYear(availableYears[0]);
     }
   }, [availableYears, selectedYear]);
 
-  const yearRecords = filtered.filter((r) =>
-    r.billingMonth.startsWith(`${selectedYear}-`)
-  );
-  const yearSolar = yearRecords.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
-  const yearExport = yearRecords.reduce((acc, r) => acc + r.summary.totalExport, 0);
-  const yearAmount = yearRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+  const yearScopedAll =
+    selectedYear === 'ALL'
+      ? records
+      : records.filter((r) => r.billingMonth.startsWith(`${selectedYear}-`));
+  const yearPdfCount = yearScopedAll.filter((r) => r.recordType === 'official_bill').length;
+  const yearEstCount = yearScopedAll.filter((r) => r.recordType === 'meter_estimate').length;
+
+  const displayedRecords =
+    selectedYear === 'ALL'
+      ? filtered
+      : filtered.filter((r) => r.billingMonth.startsWith(`${selectedYear}-`));
+  const yearSolar = displayedRecords.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
+  const yearExport = displayedRecords.reduce((acc, r) => acc + r.summary.totalExport, 0);
+  const yearAmount = displayedRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+  const yearLabel = selectedYear === 'ALL' ? 'All Years' : selectedYear;
 
   async function handleViewPdf(record: BillRecord) {
     setPdfError('');
@@ -196,7 +209,7 @@ export function HistoryTab({
         <div className="metric-box">
           <div className="label">Select Year</div>
           <select
-            aria-label="Filter yearly summary by year"
+            aria-label="Filter yearly summary and table by year"
             value={selectedYear}
             onChange={(e) => setSelectedYear(e.target.value)}
             style={{ marginTop: 4, padding: '6px 8px', fontWeight: 700 }}
@@ -206,21 +219,23 @@ export function HistoryTab({
                 {yr}
               </option>
             ))}
+            <option value="ALL">All Years</option>
           </select>
           <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 4 }}>
-            {yearRecords.length} record{yearRecords.length === 1 ? '' : 's'} in {selectedYear}
+            {displayedRecords.length} record{displayedRecords.length === 1 ? '' : 's'} in{' '}
+            {yearLabel}
           </div>
         </div>
         <div className="metric-box">
-          <div className="label">{selectedYear} Solar Generated</div>
+          <div className="label">{yearLabel} Solar Generated</div>
           <div className="val">{yearSolar.toFixed(0)} kWh</div>
         </div>
         <div className="metric-box">
-          <div className="label">{selectedYear} Exported</div>
+          <div className="label">{yearLabel} Exported</div>
           <div className="val">{yearExport.toFixed(0)} kWh</div>
         </div>
         <div className="metric-box">
-          <div className="label">{selectedYear} Billed Amount</div>
+          <div className="label">{yearLabel} Billed Amount</div>
           <div className="val">₹ {yearAmount.toFixed(2)}</div>
         </div>
       </div>
@@ -240,14 +255,14 @@ export function HistoryTab({
 
       <div className="card">
         <div className="card-header">
-          <h2 className="card-title">Monthly Consumption & Bill Archive</h2>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <h2 className="card-title">Monthly Consumption &amp; Bill Archive ({yearLabel})</h2>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button
               type="button"
               className={`btn btn-sm ${filterType === 'all' ? 'btn-primary' : 'btn-outline'}`}
               onClick={() => setFilterType('all')}
             >
-              All ({records.length})
+              All ({yearScopedAll.length})
             </button>
             <button
               type="button"
@@ -256,7 +271,7 @@ export function HistoryTab({
               }`}
               onClick={() => setFilterType('official_bill')}
             >
-              PDF Bills
+              PDF Bills ({yearPdfCount})
             </button>
             <button
               type="button"
@@ -265,114 +280,210 @@ export function HistoryTab({
               }`}
               onClick={() => setFilterType('meter_estimate')}
             >
-              Estimates
+              Estimates ({yearEstCount})
             </button>
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {displayedRecords.length === 0 ? (
           <p className="text-muted" style={{ margin: '12px 0' }}>
-            No monthly bills or meter calculations saved yet. Upload a KSEB PDF bill or save a
-            calculation from the Calculator tab.
+            No monthly bills or meter calculations saved for {yearLabel}.
           </p>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Month</th>
-                  <th>Type</th>
-                  <th className="num">Import</th>
-                  <th className="num">Export</th>
-                  <th className="num">Solar Gen</th>
-                  <th className="num">Billed</th>
-                  <th className="num">Banked</th>
-                  <th className="num">Amount</th>
-                  <th>Sync</th>
-                  <th className="num">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((rec) => (
-                  <tr key={rec.id}>
-                    <td>
-                      <strong>{rec.billingLabel}</strong>
-                      <div className="text-muted" style={{ fontSize: '0.75rem' }}>
-                        {rec.consumerNo || rec.consumerName}
-                      </div>
-                    </td>
-                    <td>
-                      {rec.recordType === 'official_bill' ? (
-                        <span className="badge badge-teal">Official PDF</span>
-                      ) : (
-                        <span className="badge badge-sky">Meter Estimate</span>
-                      )}
-                    </td>
-                    <td className="num">{rec.summary.totalImport}</td>
-                    <td className="num">{rec.summary.totalExport}</td>
-                    <td className="num">{rec.summary.solarGenerated}</td>
-                    <td className="num">{rec.summary.billedUnits}</td>
-                    <td className="num">
-                      {(rec.bankClosing ?? 0) > 0 ? (
-                        <strong style={{ color: 'var(--primary)' }}>
-                          {rec.bankClosing ?? 0}
-                        </strong>
-                      ) : (
-                        0
-                      )}
-                    </td>
-                    <td className="num">
-                      <strong>₹ {rec.summary.totalAmount.toFixed(2)}</strong>
-                    </td>
-                    <td>
-                      {rec.syncStatus === 'synced' ? (
-                        <span className="badge badge-green">Synced</span>
-                      ) : (
-                        <span className="badge badge-amber">Local</span>
-                      )}
-                    </td>
-                    <td className="num">
-                      <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-sm"
-                          onClick={() => setSelected(rec)}
-                          title="View full monthly breakdown"
-                        >
-                          <Eye size={14} />
-                          View
-                        </button>
-                        {(rec.hasLocalPdf || rec.pdfStoragePath) && (
+          <>
+            <div className="desktop-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th>Type</th>
+                    <th className="num">Import</th>
+                    <th className="num">Export</th>
+                    <th className="num">Solar Gen</th>
+                    <th className="num">Billed</th>
+                    <th className="num">Banked</th>
+                    <th className="num">Amount</th>
+                    <th>Sync</th>
+                    <th className="num">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayedRecords.map((rec) => (
+                    <tr key={rec.id}>
+                      <td>
+                        <strong>{rec.billingLabel}</strong>
+                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                          {rec.consumerNo || rec.consumerName}
+                        </div>
+                      </td>
+                      <td>
+                        {rec.recordType === 'official_bill' ? (
+                          <span className="badge badge-teal">Official PDF</span>
+                        ) : (
+                          <span className="badge badge-sky">Meter Estimate</span>
+                        )}
+                      </td>
+                      <td className="num">{rec.summary.totalImport}</td>
+                      <td className="num">{rec.summary.totalExport}</td>
+                      <td className="num">{rec.summary.solarGenerated}</td>
+                      <td className="num">{rec.summary.billedUnits}</td>
+                      <td className="num">
+                        {(rec.bankClosing ?? 0) > 0 ? (
+                          <strong style={{ color: 'var(--primary)' }}>
+                            {rec.bankClosing ?? 0}
+                          </strong>
+                        ) : (
+                          0
+                        )}
+                      </td>
+                      <td className="num">
+                        <strong>₹ {rec.summary.totalAmount.toFixed(2)}</strong>
+                      </td>
+                      <td>
+                        {rec.syncStatus === 'synced' ? (
+                          <span className="badge badge-green">Synced</span>
+                        ) : (
+                          <span className="badge badge-amber">Local</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
                           <button
                             type="button"
                             className="btn btn-outline btn-sm"
-                            disabled={loadingPdfId === rec.id}
-                            onClick={() => handleViewPdf(rec)}
-                            title={
-                              rec.hasLocalPdf
-                                ? 'Open saved PDF'
-                                : 'Download & open synced PDF from cloud'
-                            }
+                            onClick={() => setSelected(rec)}
+                            title="View full monthly breakdown"
                           >
-                            <FileText size={14} />
+                            <Eye size={14} />
+                            View
                           </button>
+                          {(rec.hasLocalPdf || rec.pdfStoragePath) && (
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              disabled={loadingPdfId === rec.id}
+                              onClick={() => handleViewPdf(rec)}
+                              title={
+                                rec.hasLocalPdf
+                                  ? 'Open saved PDF'
+                                  : 'Download & open synced PDF from cloud'
+                              }
+                            >
+                              <FileText size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-danger-outline btn-sm"
+                            disabled={deletingId === rec.id}
+                            onClick={() => handleDelete(rec)}
+                            title="Delete entry"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mobile-history-list">
+              {displayedRecords.map((rec) => (
+                <div className="mobile-bill-card" key={`m_${rec.id}`}>
+                  <div className="mobile-bill-top">
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <strong style={{ fontSize: '1rem' }}>{rec.billingLabel}</strong>
+                        {rec.recordType === 'official_bill' ? (
+                          <span className="badge badge-teal">Official PDF</span>
+                        ) : (
+                          <span className="badge badge-sky">Meter Estimate</span>
                         )}
-                        <button
-                          type="button"
-                          className="btn btn-danger-outline btn-sm"
-                          disabled={deletingId === rec.id}
-                          onClick={() => handleDelete(rec)}
-                          title="Delete entry"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {rec.syncStatus === 'synced' ? (
+                          <span className="badge badge-green">Synced</span>
+                        ) : (
+                          <span className="badge badge-amber">Local</span>
+                        )}
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: 2 }}>
+                        {rec.consumerNo || rec.consumerName}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800 }}>
+                        ₹ {rec.summary.totalAmount.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mobile-bill-metrics">
+                    <div>
+                      <div className="mobile-bill-metric-label">Import</div>
+                      <div className="mobile-bill-metric-val">{rec.summary.totalImport}</div>
+                    </div>
+                    <div>
+                      <div className="mobile-bill-metric-label">Export</div>
+                      <div className="mobile-bill-metric-val">{rec.summary.totalExport}</div>
+                    </div>
+                    <div>
+                      <div className="mobile-bill-metric-label">Solar</div>
+                      <div className="mobile-bill-metric-val">{rec.summary.solarGenerated}</div>
+                    </div>
+                    <div>
+                      <div className="mobile-bill-metric-label">Billed</div>
+                      <div className="mobile-bill-metric-val">{rec.summary.billedUnits}</div>
+                    </div>
+                    <div>
+                      <div className="mobile-bill-metric-label">Banked</div>
+                      <div
+                        className="mobile-bill-metric-val"
+                        style={
+                          (rec.bankClosing ?? 0) > 0
+                            ? { color: 'var(--primary)' }
+                            : undefined
+                        }
+                      >
+                        {rec.bankClosing ?? 0}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mobile-bill-actions">
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => setSelected(rec)}
+                    >
+                      <Eye size={14} />
+                      View
+                    </button>
+                    {(rec.hasLocalPdf || rec.pdfStoragePath) && (
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        disabled={loadingPdfId === rec.id}
+                        onClick={() => handleViewPdf(rec)}
+                      >
+                        <FileText size={14} />
+                        {loadingPdfId === rec.id ? 'Loading...' : 'PDF'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-danger-outline btn-sm"
+                      disabled={deletingId === rec.id}
+                      onClick={() => handleDelete(rec)}
+                      aria-label={`Delete ${rec.billingLabel}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
