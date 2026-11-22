@@ -135,7 +135,7 @@ export async function exportBillRecordAsPng(record: BillRecord): Promise<void> {
   ctx.textAlign = 'left';
   ctx.fillText(titleText, padX, y + 10, contentW);
 
-  const subText = `Consumer: ${record.consumerName || '—'} (${record.consumerNo || '—'}) • Phase: ${
+  const subText = `Consumer: ${record.consumerName || '—'} • Phase: ${
     record.tariffPhase
   } • Mode: ${isCumulative ? 'Cumulative (Pre-Oct 2025)' : 'ToD'} • Bank Opening: ${
     record.bankOpening
@@ -741,10 +741,10 @@ export async function exportBillArchiveAsPng(
   const padBottom = 26;
   const headerH = 44;
   const tableHeaderH = 36;
-  const rowH = 44;
+  const rowH = 36;
 
   const colWidths = [
-    165, // Month + Consumer No
+    115, // Month
     86, // Import
     86, // Export
     98, // Solar Gen
@@ -838,19 +838,11 @@ export async function exportBillArchiveAsPng(
   // Rows
   for (const rec of records) {
     const cy = y + rowH / 2;
-    const subLine = rec.consumerNo || rec.consumerName || '';
 
     ctx.textAlign = 'left';
     ctx.fillStyle = '#0f172a';
     ctx.font = `700 13px ${FONT_STACK}`;
-    if (subLine) {
-      ctx.fillText(rec.billingLabel, colStarts[0] + 10, y + 15, colWidths[0] - 16);
-      ctx.fillStyle = '#64748b';
-      ctx.font = `500 11px ${FONT_STACK}`;
-      ctx.fillText(subLine, colStarts[0] + 10, y + 31, colWidths[0] - 16);
-    } else {
-      ctx.fillText(rec.billingLabel, colStarts[0] + 10, cy, colWidths[0] - 16);
-    }
+    ctx.fillText(rec.billingLabel, colStarts[0] + 10, cy, colWidths[0] - 16);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = '#1e293b';
