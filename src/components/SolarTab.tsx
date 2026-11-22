@@ -298,7 +298,8 @@ export function SolarTab({
     setSavingBreakdownImage(true);
     setUploadError('');
     try {
-      const svgEl = weeklyChartRef.current?.querySelector('svg') ?? null;
+      const svgEl =
+        weeklyChartRef.current?.querySelector<SVGSVGElement>('svg.solar-svg') ?? null;
       await exportSolarMonthBreakdownAsPng(selectedStats, showEstimatedProduction, svgEl);
     } catch (err) {
       setUploadError(

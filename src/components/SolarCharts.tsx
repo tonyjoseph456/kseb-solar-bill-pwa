@@ -112,7 +112,7 @@ function ChartFrame({
   }, [enlarged]);
 
   async function handleSaveImage() {
-    const svgEl = enlargedBodyRef.current?.querySelector('svg');
+    const svgEl = enlargedBodyRef.current?.querySelector<SVGSVGElement>('svg.solar-svg');
     if (!svgEl) return;
     setSavingImage(true);
     setSaveError('');
