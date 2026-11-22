@@ -37,6 +37,22 @@ function formatMB(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+function summarizeRecords(list: BillRecord[]) {
+  const solar = list.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
+  const imported = list.reduce((acc, r) => acc + r.summary.totalImport, 0);
+  const exported = list.reduce((acc, r) => acc + r.summary.totalExport, 0);
+  const amount = list.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+  const count = list.length;
+  return {
+    count,
+    solar,
+    imported,
+    exported,
+    amount,
+    avgBill: count > 0 ? amount / count : 0,
+  };
+}
+
 function renderTypeBadges(rec: BillRecord) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
@@ -103,11 +119,7 @@ export function HistoryTab({
     filterType === 'all' ? true : r.recordType === filterType
   );
 
-  const totalSolar = filtered.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
-  const totalImport = filtered.reduce((acc, r) => acc + r.summary.totalImport, 0);
-  const totalExport = filtered.reduce((acc, r) => acc + r.summary.totalExport, 0);
-  const totalAmount = filtered.reduce((acc, r) => acc + r.summary.totalAmount, 0);
-  const totalAvgMonthlyBill = filtered.length > 0 ? totalAmount / filtered.length : 0;
+  const totals = summarizeRecords(filtered);
 
   const availableYears = useMemo(() => {
     const years = new Set<string>();
@@ -118,23 +130,6 @@ export function HistoryTab({
     if (years.size === 0) years.add(String(new Date().getFullYear()));
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [records]);
-
-  const perYearSummary = useMemo(() => {
-    return availableYears
-      .map((year) => {
-        const yearRecords = filtered.filter((r) => r.billingMonth.startsWith(`${year}-`));
-        const count = yearRecords.length;
-        const importedUnits = yearRecords.reduce((acc, r) => acc + r.summary.totalImport, 0);
-        const billedTotal = yearRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
-        return {
-          year,
-          count,
-          importedUnits,
-          avgMonthlyBill: count > 0 ? billedTotal / count : 0,
-        };
-      })
-      .filter((row) => row.count > 0);
-  }, [availableYears, filtered]);
 
   const [selectedYear, setSelectedYear] = useState<string>(
     availableYears[0] ?? String(new Date().getFullYear())
@@ -161,9 +156,7 @@ export function HistoryTab({
     selectedYear === 'ALL'
       ? filtered
       : filtered.filter((r) => r.billingMonth.startsWith(`${selectedYear}-`));
-  const yearSolar = displayedRecords.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
-  const yearExport = displayedRecords.reduce((acc, r) => acc + r.summary.totalExport, 0);
-  const yearAmount = displayedRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+  const yearTotals = summarizeRecords(displayedRecords);
   const yearLabel = selectedYear === 'ALL' ? 'All Years' : selectedYear;
 
   async function handleViewPdf(record: BillRecord) {
@@ -212,40 +205,50 @@ export function HistoryTab({
 
   return (
     <div>
-      <div className="grid-5" style={{ marginBottom: 10 }}>
+      {/* First row: Saved months/records & PDF Space Left in Cloud (if cloud synced) */}
+      <div className="grid-top-summary" style={{ marginBottom: 10 }}>
         <div className="metric-box">
           <div className="label">Saved Months / Records</div>
-          <div className="val">{filtered.length}</div>
+          <div className="val">{totals.count}</div>
         </div>
-        <div className="metric-box">
-          <div className="label">Total Solar Generated</div>
-          <div className="val">{totalSolar.toFixed(0)} kWh</div>
-        </div>
-        <div className="metric-box">
-          <div className="label">Total Exported</div>
-          <div className="val">{totalExport.toFixed(0)} kWh</div>
-        </div>
-        <div className="metric-box">
-          <div className="label">Total Billed Amount</div>
-          <div className="val">₹ {totalAmount.toFixed(2)}</div>
-        </div>
-        <div className="metric-box">
-          <div className="label">
-            PDF Space Left ({storageUsage?.source === 'cloud' ? 'Cloud' : 'Local'})
-          </div>
-          <div className="val">
-            {storageUsage ? `${formatMB(storageUsage.remainingBytes)}` : 'Checking...'}
-          </div>
-          {storageUsage && (
+        {storageUsage?.source === 'cloud' && (
+          <div className="metric-box">
+            <div className="label">PDF Space Left (Cloud)</div>
+            <div className="val">{formatMB(storageUsage.remainingBytes)}</div>
             <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
               {formatMB(storageUsage.usedBytes)} / {formatMB(storageUsage.quotaBytes)} used (
               {storageUsage.fileCount} PDF{storageUsage.fileCount === 1 ? '' : 's'})
             </div>
-          )}
+          </div>
+        )}
+      </div>
+
+      {/* Second row: Overall totals & average monthly bill */}
+      <div className="grid-5" style={{ marginBottom: 10 }}>
+        <div className="metric-box">
+          <div className="label">Total Solar Generated</div>
+          <div className="val">{totals.solar.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">Total Imported</div>
+          <div className="val">{totals.imported.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">Total Exported</div>
+          <div className="val">{totals.exported.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">Total Billed Amount</div>
+          <div className="val">₹ {totals.amount.toFixed(2)}</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">Average Monthly Bill</div>
+          <div className="val">₹ {totals.avgBill.toFixed(2)}</div>
         </div>
       </div>
 
-      <div className="grid-4" style={{ marginBottom: 14 }}>
+      {/* Third row: Selected year selector, yearly totals & average monthly bill */}
+      <div className="grid-6" style={{ marginBottom: 14 }}>
         <div className="metric-box">
           <div className="label">Select Year</div>
           <select
@@ -262,77 +265,29 @@ export function HistoryTab({
             <option value="ALL">All Years</option>
           </select>
           <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 4 }}>
-            {displayedRecords.length} record{displayedRecords.length === 1 ? '' : 's'} in{' '}
-            {yearLabel}
+            {yearTotals.count} record{yearTotals.count === 1 ? '' : 's'} in {yearLabel}
           </div>
         </div>
         <div className="metric-box">
           <div className="label">{yearLabel} Solar Generated</div>
-          <div className="val">{yearSolar.toFixed(0)} kWh</div>
+          <div className="val">{yearTotals.solar.toFixed(0)} kWh</div>
+        </div>
+        <div className="metric-box">
+          <div className="label">{yearLabel} Imported</div>
+          <div className="val">{yearTotals.imported.toFixed(0)} kWh</div>
         </div>
         <div className="metric-box">
           <div className="label">{yearLabel} Exported</div>
-          <div className="val">{yearExport.toFixed(0)} kWh</div>
+          <div className="val">{yearTotals.exported.toFixed(0)} kWh</div>
         </div>
         <div className="metric-box">
           <div className="label">{yearLabel} Billed Amount</div>
-          <div className="val">₹ {yearAmount.toFixed(2)}</div>
+          <div className="val">₹ {yearTotals.amount.toFixed(2)}</div>
         </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-header">
-          <h3 className="card-title">Imported Units &amp; Average Monthly Bill</h3>
-          <span className="badge badge-teal">
-            {filtered.length} month{filtered.length === 1 ? '' : 's'}
-          </span>
+        <div className="metric-box">
+          <div className="label">{yearLabel} Avg Monthly Bill</div>
+          <div className="val">₹ {yearTotals.avgBill.toFixed(2)}</div>
         </div>
-
-        <div className="grid-4" style={{ marginBottom: perYearSummary.length > 0 ? 12 : 0 }}>
-          <div className="metric-box">
-            <div className="label">Total Imported Units</div>
-            <div className="val">{totalImport.toFixed(0)} kWh</div>
-          </div>
-          <div className="metric-box">
-            <div className="label">Total Avg Monthly Billed</div>
-            <div className="val">₹ {totalAvgMonthlyBill.toFixed(2)}</div>
-            <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
-              {filtered.length > 0
-                ? `Avg across ${filtered.length} month${filtered.length === 1 ? '' : 's'}`
-                : 'No records yet'}
-            </div>
-          </div>
-        </div>
-
-        {perYearSummary.length > 0 && (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Year</th>
-                <th className="num">Imported Units</th>
-                <th className="num">Avg Monthly Bill</th>
-              </tr>
-            </thead>
-            <tbody>
-              {perYearSummary.map((row) => (
-                <tr key={row.year}>
-                  <td>
-                    <strong>{row.year}</strong>{' '}
-                    <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                      ({row.count} mo)
-                    </span>
-                  </td>
-                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
-                    {row.importedUnits.toFixed(0)} kWh
-                  </td>
-                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
-                    <strong>₹ {row.avgMonthlyBill.toFixed(2)}</strong>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
 
       {pdfError && (

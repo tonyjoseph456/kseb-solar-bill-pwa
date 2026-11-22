@@ -204,6 +204,18 @@ body {
   gap: 10px;
 }
 
+.grid-6 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.grid-top-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
+}
+
 /* Banners */
 .banner {
   display: flex;
@@ -665,7 +677,8 @@ input.input-error {
 
 @media (max-width: 600px) {
   .grid-4,
-  .grid-5 {
+  .grid-5,
+  .grid-6 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
