@@ -104,8 +104,10 @@ export function HistoryTab({
   );
 
   const totalSolar = filtered.reduce((acc, r) => acc + r.summary.solarGenerated, 0);
+  const totalImport = filtered.reduce((acc, r) => acc + r.summary.totalImport, 0);
   const totalExport = filtered.reduce((acc, r) => acc + r.summary.totalExport, 0);
   const totalAmount = filtered.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+  const totalAvgMonthlyBill = filtered.length > 0 ? totalAmount / filtered.length : 0;
 
   const availableYears = useMemo(() => {
     const years = new Set<string>();
@@ -116,6 +118,23 @@ export function HistoryTab({
     if (years.size === 0) years.add(String(new Date().getFullYear()));
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [records]);
+
+  const perYearSummary = useMemo(() => {
+    return availableYears
+      .map((year) => {
+        const yearRecords = filtered.filter((r) => r.billingMonth.startsWith(`${year}-`));
+        const count = yearRecords.length;
+        const importedUnits = yearRecords.reduce((acc, r) => acc + r.summary.totalImport, 0);
+        const billedTotal = yearRecords.reduce((acc, r) => acc + r.summary.totalAmount, 0);
+        return {
+          year,
+          count,
+          importedUnits,
+          avgMonthlyBill: count > 0 ? billedTotal / count : 0,
+        };
+      })
+      .filter((row) => row.count > 0);
+  }, [availableYears, filtered]);
 
   const [selectedYear, setSelectedYear] = useState<string>(
     availableYears[0] ?? String(new Date().getFullYear())
@@ -259,6 +278,61 @@ export function HistoryTab({
           <div className="label">{yearLabel} Billed Amount</div>
           <div className="val">₹ {yearAmount.toFixed(2)}</div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="card-header">
+          <h3 className="card-title">Imported Units &amp; Average Monthly Bill</h3>
+          <span className="badge badge-teal">
+            {filtered.length} month{filtered.length === 1 ? '' : 's'}
+          </span>
+        </div>
+
+        <div className="grid-4" style={{ marginBottom: perYearSummary.length > 0 ? 12 : 0 }}>
+          <div className="metric-box">
+            <div className="label">Total Imported Units</div>
+            <div className="val">{totalImport.toFixed(0)} kWh</div>
+          </div>
+          <div className="metric-box">
+            <div className="label">Total Avg Monthly Billed</div>
+            <div className="val">₹ {totalAvgMonthlyBill.toFixed(2)}</div>
+            <div className="text-muted" style={{ fontSize: '0.73rem', marginTop: 2 }}>
+              {filtered.length > 0
+                ? `Avg across ${filtered.length} month${filtered.length === 1 ? '' : 's'}`
+                : 'No records yet'}
+            </div>
+          </div>
+        </div>
+
+        {perYearSummary.length > 0 && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th className="num">Imported Units</th>
+                <th className="num">Avg Monthly Bill</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perYearSummary.map((row) => (
+                <tr key={row.year}>
+                  <td>
+                    <strong>{row.year}</strong>{' '}
+                    <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+                      ({row.count} mo)
+                    </span>
+                  </td>
+                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                    {row.importedUnits.toFixed(0)} kWh
+                  </td>
+                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                    <strong>₹ {row.avgMonthlyBill.toFixed(2)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {pdfError && (
