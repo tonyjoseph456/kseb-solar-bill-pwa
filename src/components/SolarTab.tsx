@@ -96,7 +96,6 @@ export function SolarTab({
       : 5;
   const matchMode: SolarBillMatchMode = settings.solarBillMatchMode ?? 'next_month';
 
-  const [plantKwInput, setPlantKwInput] = useState(String(plantKw));
   const [uploadStatus, setUploadStatus] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -109,10 +108,6 @@ export function SolarTab({
   const [importDraft, setImportDraft] = useState('');
   const [exportDraft, setExportDraft] = useState('');
   const [showDailyReadings, setShowDailyReadings] = useState(false);
-
-  useEffect(() => {
-    setPlantKwInput(String(plantKw));
-  }, [plantKw]);
 
   const allStats = useMemo(
     () => computeAllSolarMonthStats(solarRecords, billRecords, plantKw, matchMode),
@@ -250,17 +245,6 @@ export function SolarTab({
 
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }
-
-  async function handlePlantKwBlur() {
-    const n = parseFloat(plantKwInput);
-    if (!Number.isFinite(n) || n <= 0) {
-      setPlantKwInput(String(plantKw));
-      return;
-    }
-    if (n !== plantKw) {
-      await onUpdateSettings({ ...settings, solarPlantCapacityKw: n });
-    }
   }
 
   async function handleSaveMeterOverrides() {
@@ -411,7 +395,7 @@ export function SolarTab({
           </div>
         </div>
 
-        <div className="grid-4" style={{ marginBottom: 12 }}>
+        <div className="grid-2" style={{ marginBottom: 12 }}>
           <div>
             <label className="field-label">Select Year</label>
             <select
@@ -426,17 +410,6 @@ export function SolarTab({
             </select>
           </div>
           <div>
-            <label className="field-label">Plant Capacity (kW)</label>
-            <input
-              type="number"
-              step="0.1"
-              min="0.5"
-              value={plantKwInput}
-              onChange={(e) => setPlantKwInput(e.target.value)}
-              onBlur={handlePlantKwBlur}
-            />
-          </div>
-          <div style={{ gridColumn: 'span 2' }}>
             <label className="field-label">KSEB Bill Import / Export Link</label>
             <select
               value={matchMode}

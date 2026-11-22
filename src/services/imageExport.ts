@@ -966,14 +966,7 @@ export async function exportHistorySummaryAsPng(
     `KSEB Consumption & Billing Summary (${snapshot.yearLabel})`,
     padX,
     y + 13,
-    contentW - 180
-  );
-
-  drawRightPillBadge(
-    ctx,
-    padX + contentW,
-    y,
-    `${snapshot.totals.count} month${snapshot.totals.count === 1 ? '' : 's'} total`
+    contentW
   );
 
   y += headerH;
